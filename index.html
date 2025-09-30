@@ -50,15 +50,26 @@
     #command-input:focus { outline: 2px dashed #7aff7a; outline-offset: 2px; }
 
     /* Right visuals grid (world map ~2/3 width) */
-    #right { position:absolute; inset:0; padding: 10px; background: rgba(5, 15, 5, 0.5); display:grid; grid-template-rows: 1.25fr 1fr; gap: 10px; }
-    #top-row { display:grid; grid-template-columns: 2fr 1fr; gap:10px; } /* world map takes ~2/3 width */
-    #bottom-row { display:grid; grid-template-columns: 1fr 1fr 1fr; gap:10px; }
+    #right { position:absolute; inset:0; padding: 10px; background: rgba(5, 15, 5, 0.5); display:grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); grid-auto-rows: 1fr; gap: 10px; align-items:stretch; }
+    #top-row, #bottom-row { display:flex; flex-direction:column; gap:10px; min-height:0; }
+    #top-row { grid-column: 1; }
+    #bottom-row { grid-column: 2; }
+    #top-row .monitor-box, #bottom-row .monitor-box { flex:1; min-height:0; }
 
-    .monitor-box { border: 1px solid var(--phosphor); background: #000; position: relative; box-shadow: inset 0 0 18px rgba(51,255,51,0.08); overflow:hidden; }
+    .monitor-box { border: 1px solid var(--phosphor); background: #000; position: relative; box-shadow: inset 0 0 18px rgba(51,255,51,0.08); overflow:hidden; display:flex; flex-direction:column; min-height:0; }
     .monitor-title { position: absolute; top: 5px; left: 10px; font-size: 13px; text-shadow: 0 0 6px var(--phosphor); z-index: 10; }
     .scan-line { position:absolute; inset:0; background: linear-gradient(to bottom, transparent 50%, rgba(51,255,51,0.03) 51%); background-size: 100% 3px; pointer-events:none; z-index: 5; animation: scan 8s linear infinite; }
     @keyframes scan { 0% { transform: translateY(0); } 100% { transform: translateY(3px); } }
-    canvas { display:block; width:100%; height:100%; }
+    canvas { display:block; width:100%; height:100%; flex:1; }
+
+    #top-countries-box { padding: 32px 16px 16px; gap:8px; }
+    .monitor-list { list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:6px; flex:1; overflow-y:auto; position:relative; z-index:6; font-size:13px; letter-spacing:1px; }
+    .monitor-list li { display:flex; justify-content:space-between; gap:12px; border-bottom:1px solid rgba(51,255,51,0.15); padding:4px 0; }
+    .monitor-list li:last-child { border-bottom:none; }
+    .monitor-list .rank { opacity:0.7; min-width:26px; }
+    .monitor-list .label { flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .monitor-list .value { text-align:right; font-variant-numeric: tabular-nums; }
+    .monitor-list .empty { justify-content:center; border-bottom:none; opacity:0.65; }
 
     /* City drill modal */
     #city-popup[hidden] { display: none; }
@@ -161,17 +172,12 @@
           <canvas id="world-canvas"></canvas>
           <div id="tip-world" class="tip"></div>
         </div>
-        <div id="overview-box" class="monitor-box">
-          <div class="monitor-title" id="overview-title">CHANNEL OVERVIEW (28D)</div>
-          <div class="scan-line"></div>
-          <canvas id="overview-canvas"></canvas>
-        </div>
       </div>
       <div id="bottom-row">
         <div id="top-countries-box" class="monitor-box">
           <div class="monitor-title" id="top-box-title">TOP COUNTRIES</div>
           <div class="scan-line"></div>
-          <canvas id="countries-canvas"></canvas>
+          <ol id="top-list" class="monitor-list" aria-live="polite"></ol>
         </div>
         <div id="country-detail-box" class="monitor-box">
           <div class="monitor-title" id="detail-box-title">COUNTRY DETAIL</div>
@@ -229,18 +235,14 @@
   const topBoxTitle = document.getElementById('top-box-title');
   const detailBoxTitle = document.getElementById('detail-box-title');
   const worldTitle = document.getElementById('world-title');
-  const overviewTitle = document.getElementById('overview-title');
+  const topList = document.getElementById('top-list');
 
   // canvases
   const worldCanvas = document.getElementById('world-canvas');
-  const overviewCanvas = document.getElementById('overview-canvas');
-  const countriesCanvas = document.getElementById('countries-canvas');
   const countryCanvas = document.getElementById('country-canvas');
   const timeseriesCanvas = document.getElementById('timeseries-canvas');
 
   const worldCtx = worldCanvas.getContext('2d');
-  const overviewCtx = overviewCanvas.getContext('2d');
-  const countriesCtx = countriesCanvas.getContext('2d');
   const countryCtx = countryCanvas.getContext('2d');
   const timeseriesCtx = timeseriesCanvas.getContext('2d');
   const cityPopupCtx = cityPopupCanvas.getContext('2d');
@@ -276,7 +278,7 @@
     canvas.addEventListener('mouseleave', ()=>{ tipBars.style.display='none'; });
   }
 
-  [overviewCanvas, countriesCanvas, countryCanvas, cityPopupCanvas].forEach(attachBarTooltip);
+  [countryCanvas, cityPopupCanvas].forEach(attachBarTooltip);
 
   let cityPopupLastFocus = null;
   let cityPopupDetail = null;
@@ -460,8 +462,6 @@
 
   function resizeAll(){
     fitCanvas(worldCanvas, worldCtx);
-    fitCanvas(overviewCanvas, overviewCtx);
-    fitCanvas(countriesCanvas, countriesCtx);
     fitCanvas(countryCanvas, countryCtx);
     fitCanvas(timeseriesCanvas, timeseriesCtx);
     if(!cityPopup?.hasAttribute('hidden')){
@@ -656,45 +656,89 @@
     ctx.restore();
   }
 
+  function renderTopList(items, mode){
+    if(!topList) return;
+    topList.innerHTML='';
+    topList.scrollTop = 0;
+    if(mode) topList.dataset.mode = mode;
+    const list = Array.isArray(items) ? items : [];
+    if(!list.length){
+      const empty = document.createElement('li');
+      empty.className = 'empty';
+      empty.textContent = 'NO DATA';
+      topList.appendChild(empty);
+      return;
+    }
+    const frag = document.createDocumentFragment();
+    list.forEach((item, index)=>{
+      const li = document.createElement('li');
+      li.dataset.mode = mode || '';
+      if(mode === 'GEO'){
+        li.dataset.code = item?.countryCode || '';
+        li.dataset.name = item?.countryName || item?.countryCode || '';
+      } else if(mode === 'TOP' && item?.id){
+        li.dataset.videoId = item.id;
+      }
+      const rank = document.createElement('span');
+      rank.className = 'rank';
+      rank.textContent = String(index+1).padStart(2, '0');
+      const label = document.createElement('span');
+      label.className = 'label';
+      if(mode === 'GEO'){
+        const code = item?.countryCode || '';
+        const name = item?.countryName || code || 'Unknown';
+        label.textContent = code ? `${name} (${code})` : name;
+      } else {
+        label.textContent = item?.label || '(untitled)';
+      }
+      const valueSpan = document.createElement('span');
+      valueSpan.className = 'value';
+      const rawValue = Number(item?.value) || 0;
+      valueSpan.textContent = rawValue.toLocaleString();
+      li.append(rank, label, valueSpan);
+      frag.appendChild(li);
+    });
+    topList.appendChild(frag);
+  }
+
+  topList?.addEventListener('click', (event)=>{
+    const li = event.target instanceof HTMLElement ? event.target.closest('li') : null;
+    if(!li || li.classList.contains('empty')) return;
+    const mode = li.dataset.mode;
+    if(mode === 'GEO'){
+      const code = li.dataset.code || '';
+      const name = li.dataset.name || code;
+      if(code) loadCountryCities(code, name);
+    }
+  });
+
   // ==========
   // Rendering entrypoints
   // ==========
   function drawAll(){
     // Titles depend on view mode
     if(viewMode==='GEO'){
-      topBoxTitle.textContent = 'TOP COUNTRIES';
-      detailBoxTitle.textContent = 'COUNTRY DETAIL';
+      topBoxTitle.textContent = `TOP COUNTRIES (${days}D)`;
+      const detail = analytics.countryDetail;
+      if(detail?.name){
+        const codeSuffix = detail.code ? ` (${detail.code})` : '';
+        detailBoxTitle.textContent = `COUNTRY DETAIL // ${detail.name}${codeSuffix}`;
+      } else {
+        detailBoxTitle.textContent = 'COUNTRY DETAIL';
+      }
       worldTitle.textContent = 'GLOBAL THEATER // AUDIENCE BY COUNTRY';
     } else {
       topBoxTitle.textContent = 'TOP 5 VIDEOS (ALL-TIME)';
       detailBoxTitle.textContent = 'MOST WATCHED (RECENT)';
       worldTitle.textContent = 'GLOBAL THEATER';
     }
-    overviewTitle.textContent = `CHANNEL OVERVIEW (${days}D)`;
 
     drawWorld(worldCtx, worldCanvas.clientWidth, worldCanvas.clientHeight);
 
-    // Overview
-    if(analytics.overview){
-      const o = [
-        { k:'Views',     v: analytics.overview.views||0 },
-        { k:'Watch Hrs', v: analytics.overview.watchTimeHours||0 },
-        { k:'Subs',      v: analytics.overview.newSubscribers||0 },
-        { k:'Revenue',   v: analytics.overview.estRevenue||0 }
-      ];
-      drawBars(overviewCtx, o, d=>d.k, d=>d.v);
-    } else { clearAndGrid(overviewCtx, overviewCanvas.clientWidth, overviewCanvas.clientHeight); }
-
-    // Bottom-left panel
-    if(viewMode==='GEO'){
-      if(analytics.countries?.length){
-        drawBars(countriesCtx, analytics.countries.slice(0,10), d=>d.countryCode, d=>d.value);
-      } else { clearAndGrid(countriesCtx, countriesCanvas.clientWidth, countriesCanvas.clientHeight); }
-    } else {
-      if(analytics.topAllTime?.length){
-        drawBars(countriesCtx, analytics.topAllTime, d=>d.label, d=>d.value);
-      } else { clearAndGrid(countriesCtx, countriesCanvas.clientWidth, countriesCanvas.clientHeight); }
-    }
+    const topItems = viewMode==='GEO'
+      ? (Array.isArray(analytics.countries) ? analytics.countries.slice(0, 10) : [])
+      : (Array.isArray(analytics.topAllTime) ? analytics.topAllTime.slice(0, 10) : []);
+    renderTopList(topItems, viewMode);
 
     // Bottom-middle panel
     if(viewMode==='GEO'){
@@ -984,7 +1028,7 @@
   function selfTest(){
     try{
       const sampleBars = [{k:'A',v:10},{k:'B',v:15},{k:'C',v:8}];
-      drawBars(overviewCtx, sampleBars, d=>d.k, d=>d.v);
+      drawBars(countryCtx, sampleBars, d=>d.k, d=>d.v);
       drawLine(timeseriesCtx, [{date:'2025-01-01', value:1},{date:'2025-01-02', value:2}]);
       printLine('SELFTEST: charts render OK');
     }catch(err){
