@@ -176,6 +176,36 @@
 
   // Tip for world map hover
   const tipWorld = document.getElementById('tip-world');
+  const tipBars = document.createElement('div');
+  tipBars.className = 'tip';
+  tipBars.id = 'tip-bars';
+  tipBars.style.display = 'none';
+  document.body.appendChild(tipBars);
+
+  function attachBarTooltip(canvas){
+    if(!canvas) return;
+    canvas.addEventListener('mousemove', (e)=>{
+      const meta = canvas.__barMeta;
+      if(!meta || !meta.length){ tipBars.style.display='none'; return; }
+      const rect = canvas.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      const entry = meta.find(m=>x>=m.x0 && x<=m.x1);
+      if(entry){
+        const pageX = e.clientX + (window.scrollX || window.pageXOffset || 0);
+        const pageY = e.clientY + (window.scrollY || window.pageYOffset || 0);
+        tipBars.style.display='block';
+        tipBars.style.left = (pageX+10)+'px';
+        tipBars.style.top = (pageY-10)+'px';
+        const valueText = typeof entry.value === 'number' ? entry.value.toLocaleString() : entry.value;
+        tipBars.textContent = `${entry.label} — ${valueText}`;
+      } else {
+        tipBars.style.display='none';
+      }
+    });
+    canvas.addEventListener('mouseleave', ()=>{ tipBars.style.display='none'; });
+  }
+
+  [overviewCanvas, countriesCanvas, countryCanvas].forEach(attachBarTooltip);
 
   function makeDraggable(panel, handle, storageKey){
     if(!panel || !handle) return;
@@ -425,13 +455,19 @@
 
   function drawBars(ctx, data, labelAccessor, valueAccessor){
     const w=ctx.canvas.clientWidth, h=ctx.canvas.clientHeight; clearAndGrid(ctx,w,h,10,6);
+    ctx.canvas.__barMeta = [];
+    ctx.canvas.removeAttribute('title');
     if(!data || !data.length) return;
     const vals = data.map(valueAccessor); const max = Math.max(1, ...vals);
     const gap = 6; const leftPad = 40; const rightPad = 20;
     const usableW = Math.max(1, w - leftPad - rightPad);
     const barW = Math.max(6, Math.min(22, Math.floor(usableW / Math.max(1,data.length)) - gap));
-    const baseY = h-34; const chartH = h-68;
-    ctx.save(); ctx.textAlign='center'; ctx.font='12px VT323';
+    const labelBand = 28; const topPad = 34; const bottomPad = 6;
+    const baseY = h - labelBand - bottomPad;
+    const chartH = Math.max(0, baseY - topPad);
+    const barMeta = [];
+    ctx.save(); ctx.textAlign='center'; ctx.textBaseline='top'; ctx.font='12px VT323';
+    const labelColor = getComputedStyle(document.documentElement).getPropertyValue('--phosphor-soft')||'#2fe12f';
     data.forEach((d,i)=>{
       const v = Number(valueAccessor(d))||0;
       const x = leftPad + i*(barW+gap) + barW/2;
@@ -439,12 +475,14 @@
       ctx.save(); ctx.translate(x, baseY-bh);
       strokeNeon(ctx, () => { ctx.beginPath(); ctx.rect(-barW/2, 0, barW, bh); });
       ctx.restore();
-      const label = String(labelAccessor(d)??'').slice(0,22);
-      ctx.save(); ctx.translate(x, h-10); ctx.rotate(-Math.PI/2);
-      ctx.fillStyle=getComputedStyle(document.documentElement).getPropertyValue('--phosphor-soft')||'#2fe12f'; ctx.globalAlpha=.9; ctx.fillText(label, 0, 0);
-      ctx.restore();
+      const fullLabel = String(labelAccessor(d)??'');
+      const displayLabel = fullLabel.length > 12 ? `${fullLabel.slice(0,12).trimEnd()}…` : fullLabel;
+      ctx.fillStyle=labelColor; ctx.globalAlpha=.9; ctx.fillText(displayLabel, x, h - labelBand + 4);
+      barMeta.push({ x0: x - barW/2, x1: x + barW/2, label: fullLabel, value: v });
     });
     ctx.restore();
+    ctx.canvas.__barMeta = barMeta;
+    if(barMeta.length){ ctx.canvas.title = barMeta.map(m=>m.label).join(', '); }
   }
 
   function drawLine(ctx, points){
