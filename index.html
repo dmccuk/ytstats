@@ -37,7 +37,7 @@
       border-bottom: 2px solid var(--phosphor);
     }
     #footer{ bottom:0; top:auto; border-bottom:none; border-top: 2px solid var(--phosphor); }
-    #header{ top:0; }
+    #header{ top:0; gap:16px }
 
     #main-container { position: absolute; top: 50px; bottom: 50px; left: 0; right: 0; display: block; }
 
@@ -48,7 +48,7 @@
     #command-input { flex:1; background: transparent; border: none; color: var(--phosphor); font-family: 'VT323', monospace; font-size: 14px; outline: none; }
     #command-input:focus { outline: 2px dashed #7aff7a; outline-offset: 2px; }
 
-    /* Right visuals grid (world map 2/3 width) */
+    /* Right visuals grid (world map ~2/3 width) */
     #right { position:absolute; inset:0; padding: 10px; background: rgba(5, 15, 5, 0.5); display:grid; grid-template-rows: 1.25fr 1fr; gap: 10px; }
     #top-row { display:grid; grid-template-columns: 2fr 1fr; gap:10px; } /* world map takes ~2/3 width */
     #bottom-row { display:grid; grid-template-columns: 1fr 1fr 1fr; gap:10px; }
@@ -70,12 +70,20 @@
 
     /* Tooltip */
     .tip{ position:absolute; background:#001100; border:1px solid var(--phosphor); padding:4px 6px; font-size:12px; pointer-events:none; transform:translate(-50%,-110%); white-space:nowrap; display:none; }
+
+    /* header controls */
+    .controls { display:flex; align-items:center; gap:12px }
+    label.badge[for="json-input"] { cursor:pointer; }
   </style>
 </head>
 <body>
   <div id="header">
     <div>W.O.P.R // CHANNEL OPERATIONS</div>
-    <div>CONNECTION: <span id="connection-status">STANDBY</span></div>
+    <div class="controls">
+      CONNECTION: <span id="connection-status">STANDBY</span>
+      <label class="badge" for="json-input">IMPORT JSON</label>
+      <input id="json-input" type="file" accept="application/json" style="display:none" />
+    </div>
   </div>
 
   <div id="main-container">
@@ -93,31 +101,31 @@
     <section id="right">
       <div id="top-row">
         <div id="world-box" class="monitor-box">
-          <div class="monitor-title">GLOBAL THEATER // AUDIENCE BY COUNTRY</div>
+          <div class="monitor-title" id="world-title">GLOBAL THEATER // AUDIENCE BY COUNTRY</div>
           <div class="legend">metric <span class="badge" id="metric-badge">Views</span></div>
           <div class="scan-line"></div>
           <canvas id="world-canvas"></canvas>
           <div id="tip-world" class="tip"></div>
         </div>
         <div id="overview-box" class="monitor-box">
-          <div class="monitor-title">CHANNEL OVERVIEW (28D)</div>
+          <div class="monitor-title" id="overview-title">CHANNEL OVERVIEW (28D)</div>
           <div class="scan-line"></div>
           <canvas id="overview-canvas"></canvas>
         </div>
       </div>
       <div id="bottom-row">
         <div id="top-countries-box" class="monitor-box">
-          <div class="monitor-title">TOP COUNTRIES</div>
+          <div class="monitor-title" id="top-box-title">TOP COUNTRIES</div>
           <div class="scan-line"></div>
           <canvas id="countries-canvas"></canvas>
         </div>
         <div id="country-detail-box" class="monitor-box">
-          <div class="monitor-title">COUNTRY DETAIL</div>
+          <div class="monitor-title" id="detail-box-title">COUNTRY DETAIL</div>
           <div class="scan-line"></div>
           <canvas id="country-canvas"></canvas>
         </div>
         <div id="timeseries-box" class="monitor-box">
-          <div class="monitor-title">TIME SERIES</div>
+          <div class="monitor-title" id="ts-title">TIME SERIES</div>
           <div class="scan-line"></div>
           <canvas id="timeseries-canvas"></canvas>
         </div>
@@ -142,6 +150,12 @@
   const connectionStatus = document.getElementById('connection-status');
   const trackCountDisplay = document.getElementById('track-count');
   const metricBadge = document.getElementById('metric-badge');
+  const jsonInput = document.getElementById('json-input');
+
+  const topBoxTitle = document.getElementById('top-box-title');
+  const detailBoxTitle = document.getElementById('detail-box-title');
+  const worldTitle = document.getElementById('world-title');
+  const overviewTitle = document.getElementById('overview-title');
 
   // canvases
   const worldCanvas = document.getElementById('world-canvas');
@@ -188,11 +202,22 @@
   let worldGeo = null; // GeoJSON of countries
   let metric = 'views'; // views | watchTime | subscribers
   let days = 28;
-  let analytics = {
+
+  // Modes:
+  // LIVE (backend APIs), LOCAL (uploaded JSON), MOCK (fallback)
+  // viewMode: 'GEO' (countries/cities) | 'TOP' (top videos)
+  let dataMode = 'LIVE';
+  let viewMode = 'GEO';
+
+  let channelTitle = null;
+
+  const analytics = {
     overview:null,
-    countries:[],
-    countryDetail:{ code:null, name:'', cities:[] },
-    timeseries:[]
+    countries:[],                 // GEO: [{countryCode, countryName, value}]  | TOP mode: [{label,value,id}]
+    countryDetail:{ code:null, name:'', cities:[] }, // GEO cities | TOP recent videos
+    timeseries:[],
+    topAllTime:[],                // prepared rows for TOP mode
+    mostWatchedRecent: null       // {title, videoId, viewsInRange, likes, viewsTotal}
   };
 
   const iso2ToNameOverride = {
@@ -211,16 +236,12 @@
   }
   function setDefcon(n){ defconLevel = Math.max(1,Math.min(5,n)); defconDisplay.textContent = defconLevel; }
 
-  // Log runtime JS errors into terminal for easy debugging
-  window.addEventListener('error', (e)=>{
-    printLine('JS ERROR: '+(e.message||'Unknown error'), 'error');
-  });
+  window.addEventListener('error', (e)=>{ printLine('JS ERROR: '+(e.message||'Unknown error'), 'error'); });
 
   // ==========
-  // Map drawing helpers
+  // Map helpers
   // ==========
   function strokeNeon(ctx, draw){
-    // Subtle CRT-style stroke: thinner lines, lower glow
     ctx.save();
     ctx.lineJoin='round'; ctx.lineCap='round';
     ctx.shadowColor='var(--phosphor-soft)';
@@ -238,7 +259,7 @@
     for(let i=0;i<=12;i++){ ctx.beginPath(); ctx.moveTo(0,i*h/12); ctx.lineTo(w,i*h/12); ctx.stroke(); }
     ctx.restore();
 
-    if(!worldGeo) return; // outlines later
+    if(!worldGeo) return;
 
     // outlines
     worldGeo.features.forEach(f=>{
@@ -247,8 +268,8 @@
       else if(g.type==='MultiPolygon'){ g.coordinates.forEach(poly => strokeNeon(ctx, () => drawRing(poly[0]))); }
     });
 
-    // heat markers for top countries by metric
-    if(analytics.countries && analytics.countries.length){
+    // heat markers for countries (GEO mode only)
+    if(viewMode==='GEO' && analytics.countries && analytics.countries.length){
       const maxVal = Math.max(1, ...analytics.countries.map(c=>c.value));
       analytics.countries.forEach(c=>{
         const feat = findCountryFeatureByCodeOrName(c.countryCode, c.countryName);
@@ -256,10 +277,8 @@
         const [cx,cy] = centroidOfFeature(feat,w,h);
         const r = 3 + 12 * (c.value / maxVal);
         ctx.save();
-        // glow ring
         ctx.strokeStyle = '#ffff33'; ctx.lineWidth = 1; ctx.globalAlpha=.35;
         ctx.beginPath(); ctx.arc(cx, cy, r*1.25, 0, Math.PI*2); ctx.stroke();
-        // core
         ctx.globalAlpha=1; ctx.fillStyle = '#33ff33'; ctx.beginPath(); ctx.arc(cx, cy, Math.max(2, r*0.45), 0, Math.PI*2); ctx.fill();
         ctx.restore();
       });
@@ -267,7 +286,6 @@
   }
 
   function centroidOfFeature(feat,w,h){
-    // rough centroid from outer ring average
     let sumX=0,sumY=0,n=0; const g=feat.geometry; const consume=(ring)=>{ ring.forEach(([lon,lat])=>{ const [x,y]=project(lon,lat,w,h); sumX+=x; sumY+=y; n++; }); };
     if(g.type==='Polygon') consume(g.coordinates[0]); else if(g.type==='MultiPolygon') consume(g.coordinates[0][0]);
     if(n===0) return [w/2,h/2]; return [sumX/n, sumY/n];
@@ -281,14 +299,13 @@
     return worldGeo.features.find(f=>{
       const p=f.properties||{}; const n=(p.ADMIN||p.name||'').toUpperCase();
       if(upper && n===upper) return true;
-      // try ISO codes if present
       if(code){ if(p.ISO_A2 && p.ISO_A2.toUpperCase()===code) return true; if(p.iso_a2 && p.iso_a2.toUpperCase()===code) return true; if(p.ISO2 && p.ISO2.toUpperCase()===code) return true; }
       return false;
     })||null;
   }
 
   // ==========
-  // Simple charts (bars/lines) in neon
+  // Simple charts
   // ==========
   function clearAndGrid(ctx,w,h,cols=10,rows=6){
     ctx.clearRect(0,0,w,h);
@@ -311,12 +328,10 @@
       const v = Number(valueAccessor(d))||0;
       const x = leftPad + i*(barW+gap) + barW/2;
       const bh = (v/max)*chartH;
-      // bar
       ctx.save(); ctx.translate(x, baseY-bh);
       strokeNeon(ctx, () => { ctx.beginPath(); ctx.rect(-barW/2, 0, barW, bh); });
       ctx.restore();
-      // vertical label under the bar (avoid overlap)
-      const label = String(labelAccessor(d)??'').slice(0,20);
+      const label = String(labelAccessor(d)??'').slice(0,22);
       ctx.save(); ctx.translate(x, h-10); ctx.rotate(-Math.PI/2);
       ctx.fillStyle=getComputedStyle(document.documentElement).getPropertyValue('--phosphor-soft')||'#2fe12f'; ctx.globalAlpha=.9; ctx.fillText(label, 0, 0);
       ctx.restore();
@@ -340,31 +355,64 @@
   // Rendering entrypoints
   // ==========
   function drawAll(){
+    // Titles depend on view mode
+    if(viewMode==='GEO'){
+      topBoxTitle.textContent = 'TOP COUNTRIES';
+      detailBoxTitle.textContent = 'COUNTRY DETAIL';
+      worldTitle.textContent = 'GLOBAL THEATER // AUDIENCE BY COUNTRY';
+    } else {
+      topBoxTitle.textContent = 'TOP 5 VIDEOS (ALL-TIME)';
+      detailBoxTitle.textContent = 'MOST WATCHED (RECENT)';
+      worldTitle.textContent = 'GLOBAL THEATER';
+    }
+    overviewTitle.textContent = `CHANNEL OVERVIEW (${days}D)`;
+
     drawWorld(worldCtx, worldCanvas.clientWidth, worldCanvas.clientHeight);
+
+    // Overview
     if(analytics.overview){
       const o = [
-        { k:'Views', v: analytics.overview.views },
-        { k:'Watch Hrs', v: analytics.overview.watchTimeHours },
-        { k:'Subs', v: analytics.overview.newSubscribers },
-        { k:'Revenue', v: analytics.overview.estRevenue }
+        { k:'Views',     v: analytics.overview.views||0 },
+        { k:'Watch Hrs', v: analytics.overview.watchTimeHours||0 },
+        { k:'Subs',      v: analytics.overview.newSubscribers||0 },
+        { k:'Revenue',   v: analytics.overview.estRevenue||0 }
       ];
       drawBars(overviewCtx, o, d=>d.k, d=>d.v);
     } else { clearAndGrid(overviewCtx, overviewCanvas.clientWidth, overviewCanvas.clientHeight); }
 
-    if(analytics.countries?.length){
-      const top = analytics.countries.slice(0, 10);
-      drawBars(countriesCtx, top, d=>d.countryCode, d=>d.value);
-    } else { clearAndGrid(countriesCtx, countriesCanvas.clientWidth, countriesCanvas.clientHeight); }
+    // Bottom-left panel
+    if(viewMode==='GEO'){
+      if(analytics.countries?.length){
+        drawBars(countriesCtx, analytics.countries.slice(0,10), d=>d.countryCode, d=>d.value);
+      } else { clearAndGrid(countriesCtx, countriesCanvas.clientWidth, countriesCanvas.clientHeight); }
+    } else {
+      if(analytics.topAllTime?.length){
+        drawBars(countriesCtx, analytics.topAllTime, d=>d.label, d=>d.value);
+      } else { clearAndGrid(countriesCtx, countriesCanvas.clientWidth, countriesCanvas.clientHeight); }
+    }
 
-    if(analytics.countryDetail?.cities?.length){
-      const topC = analytics.countryDetail.cities.slice(0,10);
-      drawBars(countryCtx, topC, d=>d.city, d=>d.value);
-    } else { clearAndGrid(countryCtx, countryCanvas.clientWidth, countryCanvas.clientHeight); }
+    // Bottom-middle panel
+    if(viewMode==='GEO'){
+      if(analytics.countryDetail?.cities?.length){
+        drawBars(countryCtx, analytics.countryDetail.cities.slice(0,10), d=>d.city, d=>d.value);
+      } else { clearAndGrid(countryCtx, countryCanvas.clientWidth, countryCanvas.clientHeight); }
+    } else {
+      if(analytics.mostWatchedRecent){
+        const r = analytics.mostWatchedRecent;
+        const rows = [
+          { city: 'Views (range)', value: r.viewsInRange||0 },
+          { city: 'Likes (total)', value: r.likes||0 },
+          { city: 'Views (total)', value: r.viewsTotal||0 }
+        ];
+        drawBars(countryCtx, rows, d=>d.city, d=>d.value);
+      } else { clearAndGrid(countryCtx, countryCanvas.clientWidth, countryCanvas.clientHeight); }
+    }
 
-    if(analytics.timeseries?.length){
-      drawLine(timeseriesCtx, analytics.timeseries);
-    } else { clearAndGrid(timeseriesCtx, timeseriesCanvas.clientWidth, timeseriesCanvas.clientHeight); }
+    // Bottom-right panel
+    if(analytics.timeseries?.length) drawLine(timeseriesCtx, analytics.timeseries);
+    else clearAndGrid(timeseriesCtx, timeseriesCanvas.clientWidth, timeseriesCanvas.clientHeight);
 
+    // Badge
     metricBadge.textContent = (metric==='views'?'Views':metric==='watchTime'?'Watch Time':'Subscribers');
   }
 
@@ -373,8 +421,33 @@
   // ==========
   async function fetchJSON(url){ const r = await fetch(url); if(!r.ok) throw new Error('HTTP '+r.status); return r.json(); }
 
+  async function loadTopAllTime(){
+    try{
+      const rows = await fetchJSON('/api/yta/top-videos?range=all&limit=5');
+      analytics.topAllTime = rows.map(r=>({ label: (r.title||'(untitled)').slice(0,22), value: Number(r.viewsInRange||r.viewsTotal||0), id: r.videoId }));
+    }catch(e){
+      analytics.topAllTime = [];
+    }
+  }
+
+  async function loadMostWatchedRecent(){
+    // Try 7 days; on failure or empty, fall back to 28 days
+    async function tryRange(range){
+      const rows = await fetchJSON(`/api/yta/top-videos?range=${range}&limit=1`);
+      return rows && rows[0] ? rows[0] : null;
+    }
+    try{
+      let top = await tryRange('7d');
+      if(!top) top = await tryRange('28d');
+      analytics.mostWatchedRecent = top || null;
+    }catch(e){
+      analytics.mostWatchedRecent = null;
+    }
+  }
+
   async function loadAnalytics(){
     try{
+      dataMode = 'LIVE';
       connectionStatus.textContent = 'LIVE DATA';
       const [ov, cs, ts] = await Promise.all([
         fetchJSON(`/api/yta/overview?days=${days}`),
@@ -384,8 +457,15 @@
       analytics.overview = ov;
       analytics.countries = cs.sort((a,b)=>b.value-a.value);
       analytics.timeseries = ts;
+
+      // Load top videos extras (likes are total in backend)
+      await loadTopAllTime();
+      await loadMostWatchedRecent();
+
       drawAll();
     }catch(e){
+      // Fallback to mock
+      dataMode = 'MOCK';
       connectionStatus.textContent = 'MOCK DATA';
       useMockData();
       drawAll();
@@ -393,11 +473,11 @@
   }
 
   async function loadCountryCities(code, name){
+    if(viewMode!=='GEO') return;
     try{
       const cities = await fetchJSON(`/api/yta/country/${code}/cities?metric=${metric}&days=${days}`);
       analytics.countryDetail = { code, name, cities:cities.sort((a,b)=>b.value-a.value) };
     }catch(e){
-      // mock subset
       analytics.countryDetail = { code, name, cities: mockCities(code) };
     }
     const title = document.querySelector('#country-detail-box .monitor-title');
@@ -422,7 +502,18 @@
     const today = new Date(); const arr=[];
     for(let i=27;i>=0;i--){ const d=new Date(today); d.setDate(d.getDate()-i); arr.push({ date: d.toISOString().slice(0,10), value: 2000+Math.round(1200*Math.sin((i/28)*Math.PI*2)+Math.random()*200) }); }
     analytics.timeseries = arr;
+
+    // Mock top videos
+    analytics.topAllTime = [
+      { label:'Mock Video A', value: 120000, id:'A' },
+      { label:'Mock Video B', value: 90000, id:'B' },
+      { label:'Mock Video C', value: 70000, id:'C' },
+      { label:'Mock Video D', value: 65000, id:'D' },
+      { label:'Mock Video E', value: 50000, id:'E' },
+    ];
+    analytics.mostWatchedRecent = { title:'Mock Video A', videoId:'A', viewsInRange:18000, likes:2500, viewsTotal:120000 };
   }
+
   function mockCities(code){
     const sample = {
       'US':['New York','Los Angeles','Chicago','Houston','Phoenix','Dallas','San Jose','Seattle','Atlanta','Miami'],
@@ -434,14 +525,13 @@
   }
 
   // ==========
-  // Interactions: click country on world map -> load top cities
+  // Interactions
   // ==========
   worldCanvas.addEventListener('mousemove', (e)=>{
-    if(!analytics.countries?.length || !worldGeo) return;
+    if(viewMode!=='GEO' || !analytics.countries?.length || !worldGeo) return;
     const rect = worldCanvas.getBoundingClientRect();
     const x = e.clientX - rect.left; const y = e.clientY - rect.top;
     const w = worldCanvas.clientWidth; const h = worldCanvas.clientHeight;
-    // find nearest centroid among countries displayed
     let best=null, bestDist=1e9;
     analytics.countries.slice(0,30).forEach(c=>{
       const feat = findCountryFeatureByCodeOrName(c.countryCode, c.countryName); if(!feat) return;
@@ -452,11 +542,9 @@
       tipWorld.textContent = `${best.c.countryName} (${best.c.countryCode}) — ${best.c.value.toLocaleString()} ${metric}`;
     } else { tipWorld.style.display='none'; }
   });
-
   worldCanvas.addEventListener('mouseleave', ()=>{ tipWorld.style.display='none'; });
-
   worldCanvas.addEventListener('click', (e)=>{
-    if(!analytics.countries?.length || !worldGeo) return;
+    if(viewMode!=='GEO' || !analytics.countries?.length || !worldGeo) return;
     const rect = worldCanvas.getBoundingClientRect();
     const x = e.clientX - rect.left; const y = e.clientY - rect.top;
     const w = worldCanvas.clientWidth; const h = worldCanvas.clientHeight;
@@ -467,7 +555,6 @@
     });
     if(best && Math.sqrt(bestDist) < 28){
       loadCountryCities(best.c.countryCode, best.c.countryName);
-      // raise DEFCON for drama
       if(defconLevel>2) setDefcon(defconLevel-1);
       trackCount++; trackCountDisplay.textContent = trackCount;
     }
@@ -480,15 +567,17 @@
   function help(){
     printLine('AVAILABLE COMMANDS:');
     printLine('  HELP                         - Show commands');
-    printLine('  METRIC [VIEWS|WATCH|SUBS]    - Change metric');
-    printLine('  RANGE [7|28|90|365]          - Change time range (days)');
-    printLine('  COUNTRY [ISO2]               - Load country detail by ISO code (e.g., COUNTRY US)');
     printLine('  STATUS                       - Current status');
     printLine('  CLEAR                        - Clear terminal');
+    printLine('  METRIC [VIEWS|WATCH|SUBS]    - Change metric (live modes)');
+    printLine('  RANGE [7|28|90|365]          - Change time range (days)');
+    printLine('  COUNTRY [ISO2]               - Geo drill-down (GEO mode)');
+    printLine('  MODE [GEO|TOP]               - Switch bottom panels (Geo vs Top Videos)');
     printLine('');
   }
   function status(){
     printLine('SYSTEM STATUS:');
+    printLine(`  MODE: ${dataMode} / VIEW: ${viewMode}`);
     printLine(`  DEFCON LEVEL: ${defconLevel}`);
     printLine(`  TRACKS: ${trackCount}`);
     printLine(`  METRIC: ${metric}`);
@@ -502,6 +591,7 @@
       history.push(raw); histIdx=history.length; commandInput.value='';
       lastInputDisplay.textContent = raw; printLine('> '+raw);
       const parts = raw.split(/\s+/); const cmd = (parts[0]||'').toUpperCase();
+
       if(cmd==='HELP') help();
       else if(cmd==='CLEAR'){ terminalOutput.innerHTML=''; }
       else if(cmd==='STATUS') status();
@@ -509,15 +599,21 @@
         const m=(parts[1]||'').toUpperCase();
         if(m==='VIEWS') metric='views'; else if(m==='WATCH') metric='watchTime'; else if(m==='SUBS') metric='subscribers'; else { printLine('ERROR: METRIC VIEWS|WATCH|SUBS'); return; }
         metricBadge.textContent = (metric==='views'?'Views':metric==='watchTime'?'Watch Time':'Subscribers');
-        loadAnalytics();
+        if(dataMode==='LIVE') loadAnalytics();
       }
       else if(cmd==='RANGE'){
-        const d=parseInt(parts[1],10); if([7,28,90,365].includes(d)){ days=d; loadAnalytics(); } else printLine('ERROR: RANGE 7|28|90|365');
+        const d=parseInt(parts[1],10); if([7,28,90,365].includes(d)){ days=d; if(dataMode==='LIVE') loadAnalytics(); drawAll(); } else printLine('ERROR: RANGE 7|28|90|365');
       }
       else if(cmd==='COUNTRY'){
+        if(viewMode!=='GEO'){ printLine('INFO: Switch to GEO mode first (MODE GEO)'); }
         const c=(parts[1]||'').toUpperCase(); if(!c) { printLine('ERROR: COUNTRY [ISO2]'); return; }
         const item = analytics.countries.find(x=>x.countryCode===c); if(!item){ printLine('ERROR: UNKNOWN/UNRANKED COUNTRY'); return; }
         loadCountryCities(item.countryCode, item.countryName);
+      }
+      else if(cmd==='MODE'){
+        const m=(parts[1]||'').toUpperCase();
+        if(m==='GEO' || m==='TOP'){ viewMode=m; drawAll(); }
+        else printLine('ERROR: MODE GEO|TOP');
       }
       else { printLine('UNKNOWN COMMAND. TYPE HELP'); }
       printLine('');
@@ -537,7 +633,6 @@
   }
 
   function selfTest(){
-    // Quick smoke test to avoid silent syntax issues
     try{
       const sampleBars = [{k:'A',v:10},{k:'B',v:15},{k:'C',v:8}];
       drawBars(overviewCtx, sampleBars, d=>d.k, d=>d.v);
@@ -548,7 +643,7 @@
     }
   }
 
-  // load world geojson
+  // world geojson
   fetch('https://raw.githubusercontent.com/johan/world.geo.json/master/countries.geo.json')
     .then(r=>r.json()).then(geo=>{ worldGeo=geo; resizeAll(); }).catch(()=>{});
 
@@ -558,20 +653,90 @@
   loadAnalytics();
 
   // =====================
-  // Backend server stub (Node/Express + googleapis) — put in server.js
+  // Local JSON import (client-side)
+  // =====================
+  function humanLabel(s){ return (s||'').replace(/\s+/g,' ').trim(); }
+
+  function aggregateFromPublicJSON(payload){
+    const uploads = Array.isArray(payload.uploads)? payload.uploads : [];
+    const safe = uploads.map(u=>({
+      id: u.id,
+      title: humanLabel(u.title),
+      publishedAt: u.publishedAt,
+      stats: {
+        views: Number(u.statistics?.viewCount||0),
+        likes: Number(u.statistics?.likeCount||0),
+        comments: Number(u.statistics?.commentCount||0)
+      }
+    }));
+
+    const overview = safe.reduce((acc,u)=>{
+      acc.views += u.stats.views; acc.videos += 1; return acc;
+    }, { views:0, videos:0, watchTimeHours: 0, newSubscribers: 0, estRevenue: 0 });
+
+    const topVideos = [...safe]
+      .sort((a,b)=>b.stats.views-a.stats.views)
+      .slice(0,5)
+      .map(v=>({ label: v.title.slice(0,22), value: v.stats.views, id: v.id }));
+
+    const recent = [...safe]
+      .sort((a,b)=> new Date(b.publishedAt)-new Date(a.publishedAt))
+      .slice(0,1)
+      .map(v=>({ title: v.title, videoId: v.id, viewsInRange: v.stats.views, likes: v.stats.likes, viewsTotal: v.stats.views }))[0] || null;
+
+    const byDay = new Map();
+    safe.forEach(v=>{
+      const day=(v.publishedAt||'').slice(0,10);
+      if(!day) return;
+      byDay.set(day, (byDay.get(day)||0) + (v.stats.views||0));
+    });
+    const ts = [...byDay.keys()].sort().map(d=>({ date:d, value: byDay.get(d) }));
+
+    return { overview, topVideos, recent, ts };
+  }
+
+  function applyPublicJSON(payload){
+    dataMode = 'LOCAL';
+    connectionStatus.textContent = 'LOCAL JSON';
+    channelTitle = payload?.channel?.title || null;
+    if(channelTitle){ document.title = `WOPR // ${channelTitle}`; }
+
+    const agg = aggregateFromPublicJSON(payload);
+    analytics.overview = agg.overview;
+    analytics.timeseries = agg.ts;
+
+    // In LOCAL mode, repurpose panels to Top/Recent by default
+    analytics.topAllTime = agg.topVideos;
+    analytics.mostWatchedRecent = agg.recent;
+    viewMode = 'TOP';
+
+    drawAll();
+  }
+
+  jsonInput?.addEventListener('change', async (e)=>{
+    const f = e.target.files?.[0]; if(!f) return;
+    try{
+      const text = await f.text();
+      const payload = JSON.parse(text);
+      if(!payload || !Array.isArray(payload.uploads)) throw new Error('Invalid JSON: missing uploads[]');
+      applyPublicJSON(payload);
+      printLine(`IMPORTED ${payload.uploads.length} VIDEOS${channelTitle? ' — '+channelTitle: ''}`);
+    }catch(err){
+      printLine('ERROR: '+(err?.message||String(err)), 'error');
+    }
+  });
+
+  // =====================
+  // Backend server stub (Node/Express + googleapis) for reference
   // =====================
   /*
-  // server.js
+  // server.js (sketch)
   import express from 'express';
-  import fetch from 'node-fetch';
   import { google } from 'googleapis';
   const app = express();
 
-  // OAuth2 setup — create OAuth Client ID + enable APIs: YouTube Data API v3, YouTube Analytics API
-  // Store tokens securely; do NOT expose in frontend. Use a service account with a linked content owner if applicable, or 3-legged OAuth for your channel account.
   const oauth2Client = new google.auth.OAuth2(process.env.GOOGLE_CLIENT_ID, process.env.GOOGLE_CLIENT_SECRET, process.env.GOOGLE_REDIRECT_URI);
   oauth2Client.setCredentials({ refresh_token: process.env.GOOGLE_REFRESH_TOKEN });
-
   const youtubeAnalytics = google.youtubeAnalytics({ version: 'v2', auth: oauth2Client });
 
   function parseDays(req){ return Math.max(1, parseInt(req.query.days||'28',10)); }
@@ -583,9 +748,7 @@
       ids: 'channel==MINE', startDate: start, endDate: end, metrics: 'views,estimatedMinutesWatched,subscribersGained,estimatedRevenue'
     });
     const row = report.data.rows?.[0] || [0,0,0,0];
-    res.json({
-      views: row[0], watchTimeHours: Math.round((row[1]/60)*10)/10, newSubscribers: row[2], estRevenue: row[3]
-    });
+    res.json({ views: row[0], watchTimeHours: Math.round((row[1]/60)*10)/10, newSubscribers: row[2], estRevenue: row[3] });
   });
 
   app.get('/api/yta/countries', async (req,res)=>{
@@ -597,8 +760,7 @@
       ids: 'channel==MINE', startDate: start, endDate: end, dimensions: 'country', metrics: apiMetric, sort: `-${apiMetric}`
     });
     const rows = report.data.rows || [];
-    const out = rows.map(([code,val])=>({ countryCode: code, countryName: code, value: Number(val) }));
-    res.json(out);
+    res.json(rows.map(([code,val])=>({ countryCode: code, countryName: code, value: Number(val) })));
   });
 
   app.get('/api/yta/country/:code/cities', async (req,res)=>{
@@ -612,16 +774,26 @@
     const rows = report.data.rows || []; res.json(rows.map(([city,val])=>({ city, value:Number(val) })));
   });
 
-  app.get('/api/yta/timeseries', async (req,res)=>{
-    const metric = (req.query.metric||'views');
-    const metricMap = { views:'views', watchTime:'estimatedMinutesWatched', subscribers:'subscribersGained' };
-    const apiMetric = metricMap[metric] || 'views';
-    const { start, end } = dateRange(parseDays(req));
-    const report = await youtubeAnalytics.reports.query({
-      ids: 'channel==MINE', startDate: start, endDate: end, dimensions: 'day', metrics: apiMetric
+  // Top videos endpoints (likes are TOTAL; viewsInRange by chosen period)
+  const yt = google.youtube({ version: 'v3', auth: oauth2Client });
+  async function topVideos(range='7d', limit=5){
+    const now = new Date();
+    let start;
+    if(range==='all') start='2007-01-01';
+    else { const days = ({'7d':7,'28d':28,'90d':90,'365d':365})[range]||7; const s = new Date(now); s.setDate(now.getDate()-days); start = s.toISOString().slice(0,10); }
+    const end = now.toISOString().slice(0,10);
+    const report = await youtubeAnalytics.reports.query({ ids:'channel==MINE', startDate:start, endDate:end, dimensions:'video', metrics:'views', sort:'-views', maxResults:limit });
+    const rows = report.data.rows||[];
+    const ids = rows.map(r=>r[0]).filter(Boolean);
+    if(!ids.length) return [];
+    const meta = await yt.videos.list({ id: ids.join(','), part:['snippet','statistics'] });
+    const byId = new Map(); (meta.data.items||[]).forEach(v=> byId.set(v.id, v));
+    return rows.map(([id,viewsInRange])=>{
+      const m = byId.get(id);
+      return { videoId:id, title:m?.snippet?.title||'(untitled)', publishedAt:m?.snippet?.publishedAt||null, viewsInRange:Number(viewsInRange||0), likes:Number(m?.statistics?.likeCount||0), viewsTotal:Number(m?.statistics?.viewCount||0) };
     });
-    const rows = report.data.rows || []; res.json(rows.map(([date,val])=>({ date, value:Number(val) })));
-  });
+  }
+  app.get('/api/yta/top-videos', async (req,res)=>{ try{ const limit = Math.min(parseInt(req.query.limit||'5',10),20); const range=(req.query.range||'7d').toLowerCase(); res.json(await topVideos(range,limit)); }catch(e){ res.status(500).json({error:String(e?.message||e)}) } });
 
   app.listen(process.env.PORT||3000, ()=> console.log('API listening'));
   */
