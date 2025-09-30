@@ -13,6 +13,8 @@
 
     :root{
       --phosphor:#33ff33;
+      --phosphor-soft:#2fe12f;
+      --grid:#2fa62f;
       --bg:#0a0a0a;
       --warn:#ffff33;
       --error:#ff3333;
@@ -23,7 +25,7 @@
       font-family: 'VT323', monospace;
       color: var(--phosphor);
       overflow: hidden;
-      font-size: 14px; /* smaller overall text for desktop dashboard */
+      font-size: 14px; /* desktop-friendly and compact */
       text-shadow: 0 0 3px var(--phosphor);
     }
 
@@ -39,14 +41,16 @@
 
     #main-container { position: absolute; top: 50px; bottom: 50px; left: 0; right: 0; display: block; }
 
+    /* Compact terminal bottom-left */
     #terminal-section { position:absolute; left:10px; bottom:10px; width:28vw; height:28vh; border: 1px solid var(--phosphor); display:flex; flex-direction:column; background: rgba(5,15,5,0.85); box-shadow: inset 0 0 24px rgba(51,255,51,0.08); overflow:hidden; z-index:200; }
     #terminal-output { flex: 1; overflow-y: auto; padding: 10px; letter-spacing: 1px; font-size: 12px; }
     #input-line { padding: 6px 10px; border-top: 1px solid var(--phosphor); display:flex; align-items:center; gap:6px; background: rgba(0, 20, 0, 0.5); }
     #command-input { flex:1; background: transparent; border: none; color: var(--phosphor); font-family: 'VT323', monospace; font-size: 14px; outline: none; }
     #command-input:focus { outline: 2px dashed #7aff7a; outline-offset: 2px; }
 
+    /* Right visuals grid (world map 2/3 width) */
     #right { position:absolute; inset:0; padding: 10px; background: rgba(5, 15, 5, 0.5); display:grid; grid-template-rows: 1.25fr 1fr; gap: 10px; }
-    #top-row { display:grid; grid-template-columns: 2fr 1fr; gap:10px; } /* world map takes 2/3 width */
+    #top-row { display:grid; grid-template-columns: 2fr 1fr; gap:10px; } /* world map takes ~2/3 width */
     #bottom-row { display:grid; grid-template-columns: 1fr 1fr 1fr; gap:10px; }
 
     .monitor-box { border: 1px solid var(--phosphor); background: #000; position: relative; box-shadow: inset 0 0 18px rgba(51,255,51,0.08); overflow:hidden; }
@@ -131,14 +135,6 @@
   // =========================
   // WOPR + YouTube Analytics
   // =========================
-  // This extends your Wargames UI to display live YouTube Analytics metrics.
-  // It supports a BACKEND API (recommended) and falls back to MOCK data if offline.
-  // Backend endpoints expected (see server stub at bottom of this file):
-  //   GET /api/yta/overview?days=28 -> { views, watchTimeHours, newSubscribers, estRevenue }
-  //   GET /api/yta/countries?metric=views&days=28 -> [{ countryCode, countryName, value } ...]
-  //   GET /api/yta/country/:code/cities?metric=views&days=28 -> [{ city, value }...]
-  //   GET /api/yta/timeseries?metric=views&days=28 -> [{ date, value } ...]
-
   const terminalOutput = document.getElementById('terminal-output');
   const commandInput = document.getElementById('command-input');
   const lastInputDisplay = document.getElementById('last-input');
@@ -160,7 +156,7 @@
   const countryCtx = countryCanvas.getContext('2d');
   const timeseriesCtx = timeseriesCanvas.getContext('2d');
 
-  // Tip element for world map hover
+  // Tip for world map hover
   const tipWorld = document.getElementById('tip-world');
 
   // DPR-aware sizing
@@ -215,6 +211,11 @@
   }
   function setDefcon(n){ defconLevel = Math.max(1,Math.min(5,n)); defconDisplay.textContent = defconLevel; }
 
+  // Log runtime JS errors into terminal for easy debugging
+  window.addEventListener('error', (e)=>{
+    printLine('JS ERROR: '+(e.message||'Unknown error'), 'error');
+  });
+
   // ==========
   // Map drawing helpers
   // ==========
@@ -222,27 +223,22 @@
     // Subtle CRT-style stroke: thinner lines, lower glow
     ctx.save();
     ctx.lineJoin='round'; ctx.lineCap='round';
-    ctx.shadowColor='#2fe12f';
-    ctx.shadowBlur=4; ctx.globalAlpha=.35; ctx.strokeStyle='#2fe12f'; ctx.lineWidth=1.1; draw(); ctx.stroke();
+    ctx.shadowColor='var(--phosphor-soft)';
+    ctx.shadowBlur=4; ctx.globalAlpha=.35; ctx.strokeStyle=getComputedStyle(document.documentElement).getPropertyValue('--phosphor-soft')||'#2fe12f'; ctx.lineWidth=1.1; draw(); ctx.stroke();
     ctx.shadowBlur=0; ctx.globalAlpha=.9; ctx.lineWidth=.7; ctx.strokeStyle='rgba(47,225,47,0.9)'; draw(); ctx.stroke();
     ctx.restore();
   }
   function project(lon, lat, w, h){ const x=(lon+180)/360*w; const y=(90-lat)/180*h; return [x,y]; }
 
   function drawWorld(ctx,w,h){
-    if(!worldGeo){
-      // grid only until data loads
-      ctx.clearRect(0,0,w,h); ctx.save(); ctx.strokeStyle='#33ff33'; ctx.globalAlpha=.18; ctx.lineWidth=1;
-      for(let i=0;i<=12;i++){ ctx.beginPath(); ctx.moveTo(i*w/12,0); ctx.lineTo(i*w/12,h); ctx.stroke(); }
-      for(let i=0;i<=8;i++){ ctx.beginPath(); ctx.moveTo(0,i*h/8); ctx.lineTo(w,i*h/8); ctx.stroke(); }
-      ctx.restore(); return;
-    }
     ctx.clearRect(0,0,w,h);
     // grid
-    ctx.save(); ctx.strokeStyle='#33ff33'; ctx.globalAlpha=.18; ctx.lineWidth=1;
+    ctx.save(); ctx.strokeStyle=getComputedStyle(document.documentElement).getPropertyValue('--grid')||'#2fa62f'; ctx.globalAlpha=.12; ctx.lineWidth=0.6;
     for(let i=0;i<=20;i++){ ctx.beginPath(); ctx.moveTo(i*w/20,0); ctx.lineTo(i*w/20,h); ctx.stroke(); }
     for(let i=0;i<=12;i++){ ctx.beginPath(); ctx.moveTo(0,i*h/12); ctx.lineTo(w,i*h/12); ctx.stroke(); }
     ctx.restore();
+
+    if(!worldGeo) return; // outlines later
 
     // outlines
     worldGeo.features.forEach(f=>{
@@ -252,20 +248,22 @@
     });
 
     // heat markers for top countries by metric
-    const maxVal = Math.max(1, ...analytics.countries.map(c=>c.value));
-    analytics.countries.forEach(c=>{
-      const feat = findCountryFeatureByCodeOrName(c.countryCode, c.countryName);
-      if(!feat) return;
-      const [cx,cy] = centroidOfFeature(feat,w,h);
-      const r = 3 + 12 * (c.value / maxVal);
-      ctx.save();
-      // glow ring
-      ctx.strokeStyle = '#ffff33'; ctx.lineWidth = 1; ctx.globalAlpha=.4;
-      ctx.beginPath(); ctx.arc(cx, cy, r*1.25, 0, Math.PI*2); ctx.stroke();
-      // core
-      ctx.globalAlpha=1; ctx.fillStyle = '#33ff33'; ctx.beginPath(); ctx.arc(cx, cy, Math.max(2, r*0.45), 0, Math.PI*2); ctx.fill();
-      ctx.restore();
-    });
+    if(analytics.countries && analytics.countries.length){
+      const maxVal = Math.max(1, ...analytics.countries.map(c=>c.value));
+      analytics.countries.forEach(c=>{
+        const feat = findCountryFeatureByCodeOrName(c.countryCode, c.countryName);
+        if(!feat) return;
+        const [cx,cy] = centroidOfFeature(feat,w,h);
+        const r = 3 + 12 * (c.value / maxVal);
+        ctx.save();
+        // glow ring
+        ctx.strokeStyle = '#ffff33'; ctx.lineWidth = 1; ctx.globalAlpha=.35;
+        ctx.beginPath(); ctx.arc(cx, cy, r*1.25, 0, Math.PI*2); ctx.stroke();
+        // core
+        ctx.globalAlpha=1; ctx.fillStyle = '#33ff33'; ctx.beginPath(); ctx.arc(cx, cy, Math.max(2, r*0.45), 0, Math.PI*2); ctx.fill();
+        ctx.restore();
+      });
+    }
   }
 
   function centroidOfFeature(feat,w,h){
@@ -294,17 +292,15 @@
   // ==========
   function clearAndGrid(ctx,w,h,cols=10,rows=6){
     ctx.clearRect(0,0,w,h);
-    ctx.save(); ctx.strokeStyle='#2fa62f'; ctx.lineWidth=0.6; ctx.globalAlpha=.10;
+    ctx.save(); ctx.strokeStyle=getComputedStyle(document.documentElement).getPropertyValue('--grid')||'#2fa62f'; ctx.lineWidth=0.6; ctx.globalAlpha=.10;
     for(let i=0;i<=cols;i++){ ctx.beginPath(); ctx.moveTo(i*w/cols,0); ctx.lineTo(i*w/cols,h); ctx.stroke(); }
-    for(let i=0;i<=rows;i++){ ctx.beginPath(); ctx.moveTo(0,i*h/rows); ctx.lineTo(w,i*h/rows); ctx.stroke(); }
-    ctx.restore();
-  }
     for(let i=0;i<=rows;i++){ ctx.beginPath(); ctx.moveTo(0,i*h/rows); ctx.lineTo(w,i*h/rows); ctx.stroke(); }
     ctx.restore();
   }
 
   function drawBars(ctx, data, labelAccessor, valueAccessor){
     const w=ctx.canvas.clientWidth, h=ctx.canvas.clientHeight; clearAndGrid(ctx,w,h,10,6);
+    if(!data || !data.length) return;
     const vals = data.map(valueAccessor); const max = Math.max(1, ...vals);
     const gap = 6; const leftPad = 40; const rightPad = 20;
     const usableW = Math.max(1, w - leftPad - rightPad);
@@ -312,41 +308,31 @@
     const baseY = h-34; const chartH = h-68;
     ctx.save(); ctx.textAlign='center'; ctx.font='12px VT323';
     data.forEach((d,i)=>{
-      const v = valueAccessor(d);
+      const v = Number(valueAccessor(d))||0;
       const x = leftPad + i*(barW+gap) + barW/2;
       const bh = (v/max)*chartH;
-      // thin neon bar
+      // bar
       ctx.save(); ctx.translate(x, baseY-bh);
       strokeNeon(ctx, () => { ctx.beginPath(); ctx.rect(-barW/2, 0, barW, bh); });
       ctx.restore();
-      // vertical label under the bar
+      // vertical label under the bar (avoid overlap)
       const label = String(labelAccessor(d)??'').slice(0,20);
-      ctx.save(); ctx.translate(x, h-8); ctx.rotate(-Math.PI/2);
-      ctx.fillStyle='#2fe12f'; ctx.globalAlpha=.9; ctx.fillText(label, 0, 0);
+      ctx.save(); ctx.translate(x, h-10); ctx.rotate(-Math.PI/2);
+      ctx.fillStyle=getComputedStyle(document.documentElement).getPropertyValue('--phosphor-soft')||'#2fe12f'; ctx.globalAlpha=.9; ctx.fillText(label, 0, 0);
       ctx.restore();
-    });
-    ctx.restore();
-  });
-      ctx.restore();
-      // labels
-      ctx.fillStyle='#33ff33'; ctx.globalAlpha=.9; ctx.fillText(String(labelAccessor(d)).slice(0,10), x, h-10);
     });
     ctx.restore();
   }
 
   function drawLine(ctx, points){
     const w=ctx.canvas.clientWidth, h=ctx.canvas.clientHeight; clearAndGrid(ctx,w,h,12,6);
-    if(points.length<2) return;
-    const vals = points.map(p=>p.value); const max = Math.max(1, ...vals);
+    if(!points || points.length<2) return;
+    const vals = points.map(p=>Number(p.value)||0); const max = Math.max(1, ...vals);
     const xStep = (w-60)/(points.length-1); const baseY=h-30; const chartH=h-60;
     ctx.save();
-    // thinner line
     ctx.beginPath();
-    points.forEach((p,i)=>{ const x=30+i*xStep; const y=baseY - (p.value/max)*chartH; if(i===0) ctx.moveTo(x,y); else ctx.lineTo(x,y); });
+    points.forEach((p,i)=>{ const x=30+i*xStep; const y=baseY - ((Number(p.value)||0)/max)*chartH; if(i===0) ctx.moveTo(x,y); else ctx.lineTo(x,y); });
     ctx.strokeStyle='rgba(47,225,47,0.9)'; ctx.lineWidth=1; ctx.globalAlpha=.9; ctx.stroke();
-    ctx.restore();
-  });
-    });
     ctx.restore();
   }
 
@@ -451,7 +437,7 @@
   // Interactions: click country on world map -> load top cities
   // ==========
   worldCanvas.addEventListener('mousemove', (e)=>{
-    if(!analytics.countries?.length) return;
+    if(!analytics.countries?.length || !worldGeo) return;
     const rect = worldCanvas.getBoundingClientRect();
     const x = e.clientX - rect.left; const y = e.clientY - rect.top;
     const w = worldCanvas.clientWidth; const h = worldCanvas.clientHeight;
@@ -470,7 +456,7 @@
   worldCanvas.addEventListener('mouseleave', ()=>{ tipWorld.style.display='none'; });
 
   worldCanvas.addEventListener('click', (e)=>{
-    if(!analytics.countries?.length) return;
+    if(!analytics.countries?.length || !worldGeo) return;
     const rect = worldCanvas.getBoundingClientRect();
     const x = e.clientX - rect.left; const y = e.clientY - rect.top;
     const w = worldCanvas.clientWidth; const h = worldCanvas.clientHeight;
@@ -540,7 +526,7 @@
   });
 
   // ==========
-  // Boot
+  // Boot + Self-test
   // ==========
   function boot(){
     printLine('WOPR (WAR OPERATION PLAN RESPONSE) // CHANNEL OPS MODE');
@@ -550,12 +536,25 @@
     printLine('');
   }
 
+  function selfTest(){
+    // Quick smoke test to avoid silent syntax issues
+    try{
+      const sampleBars = [{k:'A',v:10},{k:'B',v:15},{k:'C',v:8}];
+      drawBars(overviewCtx, sampleBars, d=>d.k, d=>d.v);
+      drawLine(timeseriesCtx, [{date:'2025-01-01', value:1},{date:'2025-01-02', value:2}]);
+      printLine('SELFTEST: charts render OK');
+    }catch(err){
+      printLine('SELFTEST FAILED: '+(err&&err.message? err.message : String(err)), 'error');
+    }
+  }
+
   // load world geojson
   fetch('https://raw.githubusercontent.com/johan/world.geo.json/master/countries.geo.json')
     .then(r=>r.json()).then(geo=>{ worldGeo=geo; resizeAll(); }).catch(()=>{});
 
   boot();
   resizeAll();
+  selfTest();
   loadAnalytics();
 
   // =====================
@@ -599,7 +598,6 @@
     });
     const rows = report.data.rows || [];
     const out = rows.map(([code,val])=>({ countryCode: code, countryName: code, value: Number(val) }));
-    // Optional: map ISO2 code -> proper country name using your own dictionary
     res.json(out);
   });
 
