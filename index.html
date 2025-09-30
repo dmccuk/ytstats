@@ -288,8 +288,21 @@
   }
 
   function centroidOfFeature(feat,w,h){
-    let sumX=0,sumY=0,n=0; const g=feat.geometry; const consume=(ring)=>{ ring.forEach(([lon,lat])=>{ const [x,y]=project(lon,lat,w,h); sumX+=x; sumY+=y; n++; }); };
-    if(g.type==='Polygon') consume(g.coordinates[0]); else if(g.type==='MultiPolygon') consume(g.coordinates[0][0]);
+    let sumX=0,sumY=0,n=0; const g=feat.geometry||{};
+    const consumeRing=(ring)=>{
+      if(!Array.isArray(ring)) return;
+      ring.forEach(([lon,lat])=>{
+        const [x,y]=project(lon,lat,w,h);
+        sumX+=x; sumY+=y; n++;
+      });
+    };
+    if(g.type==='Polygon' && Array.isArray(g.coordinates)){
+      g.coordinates.forEach((ring,idx)=>{ if(idx===0) consumeRing(ring); });
+    } else if(g.type==='MultiPolygon' && Array.isArray(g.coordinates)){
+      g.coordinates.forEach(poly=>{
+        if(Array.isArray(poly) && poly.length>0) consumeRing(poly[0]);
+      });
+    }
     if(n===0) return [w/2,h/2]; return [sumX/n, sumY/n];
   }
 
