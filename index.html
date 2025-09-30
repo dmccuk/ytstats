@@ -23,8 +23,8 @@
       font-family: 'VT323', monospace;
       color: var(--phosphor);
       overflow: hidden;
-      font-size: 18px;
-      text-shadow: 0 0 5px var(--phosphor);
+      font-size: 14px; /* smaller overall text for desktop dashboard */
+      text-shadow: 0 0 3px var(--phosphor);
     }
 
     #header, #footer {
@@ -37,45 +37,41 @@
     #footer{ bottom:0; top:auto; border-bottom:none; border-top: 2px solid var(--phosphor); }
     #header{ top:0; }
 
-    #main-container { position: absolute; top: 50px; bottom: 50px; left: 0; right: 0; display: grid; grid-template-columns: 36% 64%; gap: 0; }
+    #main-container { position: absolute; top: 50px; bottom: 50px; left: 0; right: 0; display: block; }
 
-    #terminal-section { border-right: 2px solid var(--phosphor); display:flex; flex-direction:column; background: rgba(5,15,5,0.8); box-shadow: inset 0 0 50px rgba(51,255,51,0.1); overflow:hidden; }
-    #terminal-output { flex: 1; overflow-y: auto; padding: 20px; letter-spacing: 1px; }
-    #input-line { padding: 10px 20px; border-top: 2px solid var(--phosphor); display:flex; align-items:center; gap:10px; background: rgba(0, 20, 0, 0.5); }
-    #command-input { flex:1; background: transparent; border: none; color: var(--phosphor); font-family: 'VT323', monospace; font-size: 20px; outline: none; }
+    #terminal-section { position:absolute; left:10px; bottom:10px; width:28vw; height:28vh; border: 1px solid var(--phosphor); display:flex; flex-direction:column; background: rgba(5,15,5,0.85); box-shadow: inset 0 0 24px rgba(51,255,51,0.08); overflow:hidden; z-index:200; }
+    #terminal-output { flex: 1; overflow-y: auto; padding: 10px; letter-spacing: 1px; font-size: 12px; }
+    #input-line { padding: 6px 10px; border-top: 1px solid var(--phosphor); display:flex; align-items:center; gap:6px; background: rgba(0, 20, 0, 0.5); }
+    #command-input { flex:1; background: transparent; border: none; color: var(--phosphor); font-family: 'VT323', monospace; font-size: 14px; outline: none; }
     #command-input:focus { outline: 2px dashed #7aff7a; outline-offset: 2px; }
 
-    #right { display: grid; grid-template-rows: 1.3fr 1fr; gap: 10px; padding: 10px; background: rgba(5, 15, 5, 0.5); }
-    #top-row { display:grid; grid-template-columns: 1fr 1fr; gap:10px; }
+    #right { position:absolute; inset:0; padding: 10px; background: rgba(5, 15, 5, 0.5); display:grid; grid-template-rows: 1.25fr 1fr; gap: 10px; }
+    #top-row { display:grid; grid-template-columns: 2fr 1fr; gap:10px; } /* world map takes 2/3 width */
     #bottom-row { display:grid; grid-template-columns: 1fr 1fr 1fr; gap:10px; }
 
-    .monitor-box { border: 3px solid var(--phosphor); background: #000; position: relative; box-shadow: inset 0 0 30px rgba(51,255,51,0.1), 0 0 20px rgba(51,255,51,0.3); overflow:hidden; }
-    .monitor-title { position: absolute; top: 5px; left: 10px; font-size: 16px; text-shadow: 0 0 10px var(--phosphor); z-index: 10; }
+    .monitor-box { border: 1px solid var(--phosphor); background: #000; position: relative; box-shadow: inset 0 0 18px rgba(51,255,51,0.08); overflow:hidden; }
+    .monitor-title { position: absolute; top: 5px; left: 10px; font-size: 13px; text-shadow: 0 0 6px var(--phosphor); z-index: 10; }
     .scan-line { position:absolute; inset:0; background: linear-gradient(to bottom, transparent 50%, rgba(51,255,51,0.03) 51%); background-size: 100% 3px; pointer-events:none; z-index: 5; animation: scan 8s linear infinite; }
     @keyframes scan { 0% { transform: translateY(0); } 100% { transform: translateY(3px); } }
     canvas { display:block; width:100%; height:100%; }
 
-    .legend { position:absolute; right:10px; top:6px; font-size:14px; opacity:.85 }
-    .badge { border:1px solid var(--phosphor); padding:1px 6px; margin-left:6px; }
+    .legend { position:absolute; right:10px; top:6px; font-size:12px; opacity:.85 }
+    .badge { border:1px solid var(--phosphor); padding:1px 6px; margin-left:6px; font-size:12px; }
 
-    .cursor { display:inline-block; width:10px; height:20px; background: var(--phosphor); animation: blink 1s infinite; box-shadow:0 0 10px var(--phosphor); }
+    .cursor { display:inline-block; width:8px; height:14px; background: var(--phosphor); animation: blink 1s infinite; box-shadow:0 0 6px var(--phosphor); }
     @keyframes blink { 0%,49%{opacity:1} 50%,100%{opacity:0} }
 
     /* accessibility: reduce motion */
     @media (prefers-reduced-motion: reduce) { .scan-line{animation:none} .cursor{animation:none} }
 
     /* Tooltip */
-    .tip{ position:absolute; background:#001100; border:1px solid var(--phosphor); padding:6px 8px; font-size:16px; pointer-events:none; transform:translate(-50%,-110%); white-space:nowrap; display:none; }
+    .tip{ position:absolute; background:#001100; border:1px solid var(--phosphor); padding:4px 6px; font-size:12px; pointer-events:none; transform:translate(-50%,-110%); white-space:nowrap; display:none; }
   </style>
 </head>
 <body>
   <div id="header">
     <div>W.O.P.R // CHANNEL OPERATIONS</div>
-      <div style="display:flex;align-items:center;gap:12px">
-      CONNECTION: <span id="connection-status">STANDBY</span>
-      <label class="badge" for="json-input" style="cursor:pointer">IMPORT JSON</label>
-      <input id="json-input" type="file" accept="application/json" style="display:none" />
-    </div>
+    <div>CONNECTION: <span id="connection-status">STANDBY</span></div>
   </div>
 
   <div id="main-container">
@@ -223,10 +219,12 @@
   // Map drawing helpers
   // ==========
   function strokeNeon(ctx, draw){
-    ctx.save(); ctx.lineJoin='round'; ctx.lineCap='round'; ctx.shadowColor='#33ff33';
-    ctx.shadowBlur=20; ctx.globalAlpha=.45; ctx.strokeStyle='#33ff33'; ctx.lineWidth=5; draw(); ctx.stroke();
-    ctx.shadowBlur=10; ctx.globalAlpha=.85; ctx.lineWidth=2.5; draw(); ctx.stroke();
-    ctx.shadowBlur=0; ctx.globalAlpha=1; ctx.lineWidth=1.25; ctx.strokeStyle='rgba(51,255,51,0.9)'; draw(); ctx.stroke();
+    // Subtle CRT-style stroke: thinner lines, lower glow
+    ctx.save();
+    ctx.lineJoin='round'; ctx.lineCap='round';
+    ctx.shadowColor='#2fe12f';
+    ctx.shadowBlur=4; ctx.globalAlpha=.35; ctx.strokeStyle='#2fe12f'; ctx.lineWidth=1.1; draw(); ctx.stroke();
+    ctx.shadowBlur=0; ctx.globalAlpha=.9; ctx.lineWidth=.7; ctx.strokeStyle='rgba(47,225,47,0.9)'; draw(); ctx.stroke();
     ctx.restore();
   }
   function project(lon, lat, w, h){ const x=(lon+180)/360*w; const y=(90-lat)/180*h; return [x,y]; }
@@ -295,8 +293,12 @@
   // Simple charts (bars/lines) in neon
   // ==========
   function clearAndGrid(ctx,w,h,cols=10,rows=6){
-    ctx.clearRect(0,0,w,h); ctx.save(); ctx.strokeStyle='#33ff33'; ctx.lineWidth=1; ctx.globalAlpha=.18;
+    ctx.clearRect(0,0,w,h);
+    ctx.save(); ctx.strokeStyle='#2fa62f'; ctx.lineWidth=0.6; ctx.globalAlpha=.10;
     for(let i=0;i<=cols;i++){ ctx.beginPath(); ctx.moveTo(i*w/cols,0); ctx.lineTo(i*w/cols,h); ctx.stroke(); }
+    for(let i=0;i<=rows;i++){ ctx.beginPath(); ctx.moveTo(0,i*h/rows); ctx.lineTo(w,i*h/rows); ctx.stroke(); }
+    ctx.restore();
+  }
     for(let i=0;i<=rows;i++){ ctx.beginPath(); ctx.moveTo(0,i*h/rows); ctx.lineTo(w,i*h/rows); ctx.stroke(); }
     ctx.restore();
   }
@@ -304,14 +306,27 @@
   function drawBars(ctx, data, labelAccessor, valueAccessor){
     const w=ctx.canvas.clientWidth, h=ctx.canvas.clientHeight; clearAndGrid(ctx,w,h,10,6);
     const vals = data.map(valueAccessor); const max = Math.max(1, ...vals);
-    const barW = Math.max(8, (w-40)/data.length - 4);
-    const baseY = h-30; const chartH = h-60;
-    ctx.save(); ctx.textAlign='center'; ctx.font='16px VT323';
+    const gap = 6; const leftPad = 40; const rightPad = 20;
+    const usableW = Math.max(1, w - leftPad - rightPad);
+    const barW = Math.max(6, Math.min(22, Math.floor(usableW / Math.max(1,data.length)) - gap));
+    const baseY = h-34; const chartH = h-68;
+    ctx.save(); ctx.textAlign='center'; ctx.font='12px VT323';
     data.forEach((d,i)=>{
-      const v = valueAccessor(d); const x = 30 + i*(barW+4) + barW/2; const bh = (v/max)*chartH;
-      // glow bar
+      const v = valueAccessor(d);
+      const x = leftPad + i*(barW+gap) + barW/2;
+      const bh = (v/max)*chartH;
+      // thin neon bar
       ctx.save(); ctx.translate(x, baseY-bh);
       strokeNeon(ctx, () => { ctx.beginPath(); ctx.rect(-barW/2, 0, barW, bh); });
+      ctx.restore();
+      // vertical label under the bar
+      const label = String(labelAccessor(d)??'').slice(0,20);
+      ctx.save(); ctx.translate(x, h-8); ctx.rotate(-Math.PI/2);
+      ctx.fillStyle='#2fe12f'; ctx.globalAlpha=.9; ctx.fillText(label, 0, 0);
+      ctx.restore();
+    });
+    ctx.restore();
+  });
       ctx.restore();
       // labels
       ctx.fillStyle='#33ff33'; ctx.globalAlpha=.9; ctx.fillText(String(labelAccessor(d)).slice(0,10), x, h-10);
@@ -325,9 +340,12 @@
     const vals = points.map(p=>p.value); const max = Math.max(1, ...vals);
     const xStep = (w-60)/(points.length-1); const baseY=h-30; const chartH=h-60;
     ctx.save();
-    strokeNeon(ctx, () => {
-      ctx.beginPath();
-      points.forEach((p,i)=>{ const x=30+i*xStep; const y=baseY - (p.value/max)*chartH; if(i===0) ctx.moveTo(x,y); else ctx.lineTo(x,y); });
+    // thinner line
+    ctx.beginPath();
+    points.forEach((p,i)=>{ const x=30+i*xStep; const y=baseY - (p.value/max)*chartH; if(i===0) ctx.moveTo(x,y); else ctx.lineTo(x,y); });
+    ctx.strokeStyle='rgba(47,225,47,0.9)'; ctx.lineWidth=1; ctx.globalAlpha=.9; ctx.stroke();
+    ctx.restore();
+  });
     });
     ctx.restore();
   }
