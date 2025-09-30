@@ -1,0 +1,610 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="theme-color" content="#0a0a0a" />
+  <title>WOPR // Channel Operations (YouTube Analytics)</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=VT323&display=swap" rel="stylesheet">
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    :root{
+      --phosphor:#33ff33;
+      --bg:#0a0a0a;
+      --warn:#ffff33;
+      --error:#ff3333;
+    }
+
+    body {
+      background: var(--bg);
+      font-family: 'VT323', monospace;
+      color: var(--phosphor);
+      overflow: hidden;
+      font-size: 18px;
+      text-shadow: 0 0 5px var(--phosphor);
+    }
+
+    #header, #footer {
+      position: absolute; left: 0; right: 0;
+      padding: 10px 20px; display: flex; justify-content: space-between; align-items:center;
+      text-shadow: 0 0 8px var(--phosphor), 0 0 15px var(--phosphor);
+      z-index: 100; background: rgba(10, 10, 10, 0.9);
+      border-bottom: 2px solid var(--phosphor);
+    }
+    #footer{ bottom:0; top:auto; border-bottom:none; border-top: 2px solid var(--phosphor); }
+    #header{ top:0; }
+
+    #main-container { position: absolute; top: 50px; bottom: 50px; left: 0; right: 0; display: grid; grid-template-columns: 36% 64%; gap: 0; }
+
+    #terminal-section { border-right: 2px solid var(--phosphor); display:flex; flex-direction:column; background: rgba(5,15,5,0.8); box-shadow: inset 0 0 50px rgba(51,255,51,0.1); overflow:hidden; }
+    #terminal-output { flex: 1; overflow-y: auto; padding: 20px; letter-spacing: 1px; }
+    #input-line { padding: 10px 20px; border-top: 2px solid var(--phosphor); display:flex; align-items:center; gap:10px; background: rgba(0, 20, 0, 0.5); }
+    #command-input { flex:1; background: transparent; border: none; color: var(--phosphor); font-family: 'VT323', monospace; font-size: 20px; outline: none; }
+    #command-input:focus { outline: 2px dashed #7aff7a; outline-offset: 2px; }
+
+    #right { display: grid; grid-template-rows: 1.3fr 1fr; gap: 10px; padding: 10px; background: rgba(5, 15, 5, 0.5); }
+    #top-row { display:grid; grid-template-columns: 1fr 1fr; gap:10px; }
+    #bottom-row { display:grid; grid-template-columns: 1fr 1fr 1fr; gap:10px; }
+
+    .monitor-box { border: 3px solid var(--phosphor); background: #000; position: relative; box-shadow: inset 0 0 30px rgba(51,255,51,0.1), 0 0 20px rgba(51,255,51,0.3); overflow:hidden; }
+    .monitor-title { position: absolute; top: 5px; left: 10px; font-size: 16px; text-shadow: 0 0 10px var(--phosphor); z-index: 10; }
+    .scan-line { position:absolute; inset:0; background: linear-gradient(to bottom, transparent 50%, rgba(51,255,51,0.03) 51%); background-size: 100% 3px; pointer-events:none; z-index: 5; animation: scan 8s linear infinite; }
+    @keyframes scan { 0% { transform: translateY(0); } 100% { transform: translateY(3px); } }
+    canvas { display:block; width:100%; height:100%; }
+
+    .legend { position:absolute; right:10px; top:6px; font-size:14px; opacity:.85 }
+    .badge { border:1px solid var(--phosphor); padding:1px 6px; margin-left:6px; }
+
+    .cursor { display:inline-block; width:10px; height:20px; background: var(--phosphor); animation: blink 1s infinite; box-shadow:0 0 10px var(--phosphor); }
+    @keyframes blink { 0%,49%{opacity:1} 50%,100%{opacity:0} }
+
+    /* accessibility: reduce motion */
+    @media (prefers-reduced-motion: reduce) { .scan-line{animation:none} .cursor{animation:none} }
+
+    /* Tooltip */
+    .tip{ position:absolute; background:#001100; border:1px solid var(--phosphor); padding:6px 8px; font-size:16px; pointer-events:none; transform:translate(-50%,-110%); white-space:nowrap; display:none; }
+  </style>
+</head>
+<body>
+  <div id="header">
+    <div>W.O.P.R // CHANNEL OPERATIONS</div>
+    <div>CONNECTION: <span id="connection-status">STANDBY</span></div>
+  </div>
+
+  <div id="main-container">
+    <!-- Left: Terminal -->
+    <section id="terminal-section">
+      <div id="terminal-output" role="log" aria-live="polite" aria-atomic="false"></div>
+      <div id="input-line">
+        <span id="prompt">&gt;</span>
+        <input type="text" id="command-input" placeholder="Type HELP for commands" />
+        <span class="cursor"></span>
+      </div>
+    </section>
+
+    <!-- Right: Visuals -->
+    <section id="right">
+      <div id="top-row">
+        <div id="world-box" class="monitor-box">
+          <div class="monitor-title">GLOBAL THEATER // AUDIENCE BY COUNTRY</div>
+          <div class="legend">metric <span class="badge" id="metric-badge">Views</span></div>
+          <div class="scan-line"></div>
+          <canvas id="world-canvas"></canvas>
+          <div id="tip-world" class="tip"></div>
+        </div>
+        <div id="overview-box" class="monitor-box">
+          <div class="monitor-title">CHANNEL OVERVIEW (28D)</div>
+          <div class="scan-line"></div>
+          <canvas id="overview-canvas"></canvas>
+        </div>
+      </div>
+      <div id="bottom-row">
+        <div id="top-countries-box" class="monitor-box">
+          <div class="monitor-title">TOP COUNTRIES</div>
+          <div class="scan-line"></div>
+          <canvas id="countries-canvas"></canvas>
+        </div>
+        <div id="country-detail-box" class="monitor-box">
+          <div class="monitor-title">COUNTRY DETAIL</div>
+          <div class="scan-line"></div>
+          <canvas id="country-canvas"></canvas>
+        </div>
+        <div id="timeseries-box" class="monitor-box">
+          <div class="monitor-title">TIME SERIES</div>
+          <div class="scan-line"></div>
+          <canvas id="timeseries-canvas"></canvas>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <div id="footer">
+    <div>NORAD // CHEYENNE MTN</div>
+    <div>TRACKS: <span id="track-count">0</span> | DEFCON: <span id="defcon">5</span></div>
+    <div>LAST INPUT: <span id="last-input">-</span></div>
+  </div>
+
+  <script>
+  // =========================
+  // WOPR + YouTube Analytics
+  // =========================
+  // This extends your Wargames UI to display live YouTube Analytics metrics.
+  // It supports a BACKEND API (recommended) and falls back to MOCK data if offline.
+  // Backend endpoints expected (see server stub at bottom of this file):
+  //   GET /api/yta/overview?days=28 -> { views, watchTimeHours, newSubscribers, estRevenue }
+  //   GET /api/yta/countries?metric=views&days=28 -> [{ countryCode, countryName, value } ...]
+  //   GET /api/yta/country/:code/cities?metric=views&days=28 -> [{ city, value }...]
+  //   GET /api/yta/timeseries?metric=views&days=28 -> [{ date, value } ...]
+
+  const terminalOutput = document.getElementById('terminal-output');
+  const commandInput = document.getElementById('command-input');
+  const lastInputDisplay = document.getElementById('last-input');
+  const defconDisplay = document.getElementById('defcon');
+  const connectionStatus = document.getElementById('connection-status');
+  const trackCountDisplay = document.getElementById('track-count');
+  const metricBadge = document.getElementById('metric-badge');
+
+  // canvases
+  const worldCanvas = document.getElementById('world-canvas');
+  const overviewCanvas = document.getElementById('overview-canvas');
+  const countriesCanvas = document.getElementById('countries-canvas');
+  const countryCanvas = document.getElementById('country-canvas');
+  const timeseriesCanvas = document.getElementById('timeseries-canvas');
+
+  const worldCtx = worldCanvas.getContext('2d');
+  const overviewCtx = overviewCanvas.getContext('2d');
+  const countriesCtx = countriesCanvas.getContext('2d');
+  const countryCtx = countryCanvas.getContext('2d');
+  const timeseriesCtx = timeseriesCanvas.getContext('2d');
+
+  // Tip element for world map hover
+  const tipWorld = document.getElementById('tip-world');
+
+  // DPR-aware sizing
+  function fitCanvas(c, ctx){
+    const dpr = window.devicePixelRatio || 1;
+    const cw = c.clientWidth || c.parentElement.clientWidth;
+    const ch = c.clientHeight || c.parentElement.clientHeight;
+    c.width = Math.max(1, Math.floor(cw * dpr));
+    c.height = Math.max(1, Math.floor(ch * dpr));
+    c.style.width = cw+'px';
+    c.style.height = ch+'px';
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  }
+
+  function resizeAll(){
+    fitCanvas(worldCanvas, worldCtx);
+    fitCanvas(overviewCanvas, overviewCtx);
+    fitCanvas(countriesCanvas, countriesCtx);
+    fitCanvas(countryCanvas, countryCtx);
+    fitCanvas(timeseriesCanvas, timeseriesCtx);
+    drawAll();
+  }
+  window.addEventListener('resize', () => requestAnimationFrame(resizeAll));
+
+  // ==========
+  // State
+  // ==========
+  let defconLevel = 5; let trackCount=0;
+  let worldGeo = null; // GeoJSON of countries
+  let metric = 'views'; // views | watchTime | subscribers
+  let days = 28;
+  let analytics = {
+    overview:null,
+    countries:[],
+    countryDetail:{ code:null, name:'', cities:[] },
+    timeseries:[]
+  };
+
+  const iso2ToNameOverride = {
+    'US':'United States of America', 'GB':'United Kingdom', 'RU':'Russian Federation',
+    'CI':'Côte d\'Ivoire', 'CD':'Democratic Republic of the Congo', 'CG':'Republic of the Congo',
+    'KR':'Republic of Korea', 'KP':'Democratic People\'s Republic of Korea', 'LA':'Lao PDR'
+  };
+
+  // ==========
+  // Terminal helpers
+  // ==========
+  function printLine(text, className=''){
+    const div = document.createElement('div');
+    div.className = className; div.textContent = text; terminalOutput.appendChild(div);
+    terminalOutput.scrollTop = terminalOutput.scrollHeight;
+  }
+  function setDefcon(n){ defconLevel = Math.max(1,Math.min(5,n)); defconDisplay.textContent = defconLevel; }
+
+  // ==========
+  // Map drawing helpers
+  // ==========
+  function strokeNeon(ctx, draw){
+    ctx.save(); ctx.lineJoin='round'; ctx.lineCap='round'; ctx.shadowColor='#33ff33';
+    ctx.shadowBlur=20; ctx.globalAlpha=.45; ctx.strokeStyle='#33ff33'; ctx.lineWidth=5; draw(); ctx.stroke();
+    ctx.shadowBlur=10; ctx.globalAlpha=.85; ctx.lineWidth=2.5; draw(); ctx.stroke();
+    ctx.shadowBlur=0; ctx.globalAlpha=1; ctx.lineWidth=1.25; ctx.strokeStyle='rgba(51,255,51,0.9)'; draw(); ctx.stroke();
+    ctx.restore();
+  }
+  function project(lon, lat, w, h){ const x=(lon+180)/360*w; const y=(90-lat)/180*h; return [x,y]; }
+
+  function drawWorld(ctx,w,h){
+    if(!worldGeo){
+      // grid only until data loads
+      ctx.clearRect(0,0,w,h); ctx.save(); ctx.strokeStyle='#33ff33'; ctx.globalAlpha=.18; ctx.lineWidth=1;
+      for(let i=0;i<=12;i++){ ctx.beginPath(); ctx.moveTo(i*w/12,0); ctx.lineTo(i*w/12,h); ctx.stroke(); }
+      for(let i=0;i<=8;i++){ ctx.beginPath(); ctx.moveTo(0,i*h/8); ctx.lineTo(w,i*h/8); ctx.stroke(); }
+      ctx.restore(); return;
+    }
+    ctx.clearRect(0,0,w,h);
+    // grid
+    ctx.save(); ctx.strokeStyle='#33ff33'; ctx.globalAlpha=.18; ctx.lineWidth=1;
+    for(let i=0;i<=20;i++){ ctx.beginPath(); ctx.moveTo(i*w/20,0); ctx.lineTo(i*w/20,h); ctx.stroke(); }
+    for(let i=0;i<=12;i++){ ctx.beginPath(); ctx.moveTo(0,i*h/12); ctx.lineTo(w,i*h/12); ctx.stroke(); }
+    ctx.restore();
+
+    // outlines
+    worldGeo.features.forEach(f=>{
+      const g=f.geometry; const drawRing=(ring)=>{ ctx.beginPath(); for(let i=0;i<ring.length;i++){ const [lon,lat]=ring[i]; const [x,y]=project(lon,lat,w,h); if(i===0)ctx.moveTo(x,y); else ctx.lineTo(x,y);} };
+      if(g.type==='Polygon'){ strokeNeon(ctx, () => drawRing(g.coordinates[0])); }
+      else if(g.type==='MultiPolygon'){ g.coordinates.forEach(poly => strokeNeon(ctx, () => drawRing(poly[0]))); }
+    });
+
+    // heat markers for top countries by metric
+    const maxVal = Math.max(1, ...analytics.countries.map(c=>c.value));
+    analytics.countries.forEach(c=>{
+      const feat = findCountryFeatureByCodeOrName(c.countryCode, c.countryName);
+      if(!feat) return;
+      const [cx,cy] = centroidOfFeature(feat,w,h);
+      const r = 3 + 12 * (c.value / maxVal);
+      ctx.save();
+      // glow ring
+      ctx.strokeStyle = '#ffff33'; ctx.lineWidth = 1; ctx.globalAlpha=.4;
+      ctx.beginPath(); ctx.arc(cx, cy, r*1.25, 0, Math.PI*2); ctx.stroke();
+      // core
+      ctx.globalAlpha=1; ctx.fillStyle = '#33ff33'; ctx.beginPath(); ctx.arc(cx, cy, Math.max(2, r*0.45), 0, Math.PI*2); ctx.fill();
+      ctx.restore();
+    });
+  }
+
+  function centroidOfFeature(feat,w,h){
+    // rough centroid from outer ring average
+    let sumX=0,sumY=0,n=0; const g=feat.geometry; const consume=(ring)=>{ ring.forEach(([lon,lat])=>{ const [x,y]=project(lon,lat,w,h); sumX+=x; sumY+=y; n++; }); };
+    if(g.type==='Polygon') consume(g.coordinates[0]); else if(g.type==='MultiPolygon') consume(g.coordinates[0][0]);
+    if(n===0) return [w/2,h/2]; return [sumX/n, sumY/n];
+  }
+
+  function findCountryFeatureByCodeOrName(code, name){
+    if(!worldGeo) return null;
+    let targetName = name;
+    if(code && iso2ToNameOverride[code]) targetName = iso2ToNameOverride[code];
+    const upper = (targetName||'').toUpperCase();
+    return worldGeo.features.find(f=>{
+      const p=f.properties||{}; const n=(p.ADMIN||p.name||'').toUpperCase();
+      if(upper && n===upper) return true;
+      // try ISO codes if present
+      if(code){ if(p.ISO_A2 && p.ISO_A2.toUpperCase()===code) return true; if(p.iso_a2 && p.iso_a2.toUpperCase()===code) return true; if(p.ISO2 && p.ISO2.toUpperCase()===code) return true; }
+      return false;
+    })||null;
+  }
+
+  // ==========
+  // Simple charts (bars/lines) in neon
+  // ==========
+  function clearAndGrid(ctx,w,h,cols=10,rows=6){
+    ctx.clearRect(0,0,w,h); ctx.save(); ctx.strokeStyle='#33ff33'; ctx.lineWidth=1; ctx.globalAlpha=.18;
+    for(let i=0;i<=cols;i++){ ctx.beginPath(); ctx.moveTo(i*w/cols,0); ctx.lineTo(i*w/cols,h); ctx.stroke(); }
+    for(let i=0;i<=rows;i++){ ctx.beginPath(); ctx.moveTo(0,i*h/rows); ctx.lineTo(w,i*h/rows); ctx.stroke(); }
+    ctx.restore();
+  }
+
+  function drawBars(ctx, data, labelAccessor, valueAccessor){
+    const w=ctx.canvas.clientWidth, h=ctx.canvas.clientHeight; clearAndGrid(ctx,w,h,10,6);
+    const vals = data.map(valueAccessor); const max = Math.max(1, ...vals);
+    const barW = Math.max(8, (w-40)/data.length - 4);
+    const baseY = h-30; const chartH = h-60;
+    ctx.save(); ctx.textAlign='center'; ctx.font='16px VT323';
+    data.forEach((d,i)=>{
+      const v = valueAccessor(d); const x = 30 + i*(barW+4) + barW/2; const bh = (v/max)*chartH;
+      // glow bar
+      ctx.save(); ctx.translate(x, baseY-bh);
+      strokeNeon(ctx, () => { ctx.beginPath(); ctx.rect(-barW/2, 0, barW, bh); });
+      ctx.restore();
+      // labels
+      ctx.fillStyle='#33ff33'; ctx.globalAlpha=.9; ctx.fillText(String(labelAccessor(d)).slice(0,10), x, h-10);
+    });
+    ctx.restore();
+  }
+
+  function drawLine(ctx, points){
+    const w=ctx.canvas.clientWidth, h=ctx.canvas.clientHeight; clearAndGrid(ctx,w,h,12,6);
+    if(points.length<2) return;
+    const vals = points.map(p=>p.value); const max = Math.max(1, ...vals);
+    const xStep = (w-60)/(points.length-1); const baseY=h-30; const chartH=h-60;
+    ctx.save();
+    strokeNeon(ctx, () => {
+      ctx.beginPath();
+      points.forEach((p,i)=>{ const x=30+i*xStep; const y=baseY - (p.value/max)*chartH; if(i===0) ctx.moveTo(x,y); else ctx.lineTo(x,y); });
+    });
+    ctx.restore();
+  }
+
+  // ==========
+  // Rendering entrypoints
+  // ==========
+  function drawAll(){
+    drawWorld(worldCtx, worldCanvas.clientWidth, worldCanvas.clientHeight);
+    if(analytics.overview){
+      const o = [
+        { k:'Views', v: analytics.overview.views },
+        { k:'Watch Hrs', v: analytics.overview.watchTimeHours },
+        { k:'Subs', v: analytics.overview.newSubscribers },
+        { k:'Revenue', v: analytics.overview.estRevenue }
+      ];
+      drawBars(overviewCtx, o, d=>d.k, d=>d.v);
+    } else { clearAndGrid(overviewCtx, overviewCanvas.clientWidth, overviewCanvas.clientHeight); }
+
+    if(analytics.countries?.length){
+      const top = analytics.countries.slice(0, 10);
+      drawBars(countriesCtx, top, d=>d.countryCode, d=>d.value);
+    } else { clearAndGrid(countriesCtx, countriesCanvas.clientWidth, countriesCanvas.clientHeight); }
+
+    if(analytics.countryDetail?.cities?.length){
+      const topC = analytics.countryDetail.cities.slice(0,10);
+      drawBars(countryCtx, topC, d=>d.city, d=>d.value);
+    } else { clearAndGrid(countryCtx, countryCanvas.clientWidth, countryCanvas.clientHeight); }
+
+    if(analytics.timeseries?.length){
+      drawLine(timeseriesCtx, analytics.timeseries);
+    } else { clearAndGrid(timeseriesCtx, timeseriesCanvas.clientWidth, timeseriesCanvas.clientHeight); }
+
+    metricBadge.textContent = (metric==='views'?'Views':metric==='watchTime'?'Watch Time':'Subscribers');
+  }
+
+  // ==========
+  // Data layer (Backend first, mock fallback)
+  // ==========
+  async function fetchJSON(url){ const r = await fetch(url); if(!r.ok) throw new Error('HTTP '+r.status); return r.json(); }
+
+  async function loadAnalytics(){
+    try{
+      connectionStatus.textContent = 'LIVE DATA';
+      const [ov, cs, ts] = await Promise.all([
+        fetchJSON(`/api/yta/overview?days=${days}`),
+        fetchJSON(`/api/yta/countries?metric=${metric}&days=${days}`),
+        fetchJSON(`/api/yta/timeseries?metric=${metric}&days=${days}`)
+      ]);
+      analytics.overview = ov;
+      analytics.countries = cs.sort((a,b)=>b.value-a.value);
+      analytics.timeseries = ts;
+      drawAll();
+    }catch(e){
+      connectionStatus.textContent = 'MOCK DATA';
+      useMockData();
+      drawAll();
+    }
+  }
+
+  async function loadCountryCities(code, name){
+    try{
+      const cities = await fetchJSON(`/api/yta/country/${code}/cities?metric=${metric}&days=${days}`);
+      analytics.countryDetail = { code, name, cities:cities.sort((a,b)=>b.value-a.value) };
+    }catch(e){
+      // mock subset
+      analytics.countryDetail = { code, name, cities: mockCities(code) };
+    }
+    const title = document.querySelector('#country-detail-box .monitor-title');
+    title.textContent = `COUNTRY DETAIL // ${name} (${code})`;
+    drawAll();
+  }
+
+  function useMockData(){
+    analytics.overview = { views: 123456, watchTimeHours: 789.3, newSubscribers: 420, estRevenue: 321.45 };
+    analytics.countries = [
+      { countryCode:'US', countryName:'United States of America', value: 48000 },
+      { countryCode:'GB', countryName:'United Kingdom', value: 22000 },
+      { countryCode:'IN', countryName:'India', value: 18000 },
+      { countryCode:'CA', countryName:'Canada', value: 9500 },
+      { countryCode:'DE', countryName:'Germany', value: 8800 },
+      { countryCode:'AU', countryName:'Australia', value: 7700 },
+      { countryCode:'PH', countryName:'Philippines', value: 6200 },
+      { countryCode:'FR', countryName:'France', value: 5400 },
+      { countryCode:'BR', countryName:'Brazil', value: 5000 },
+      { countryCode:'JP', countryName:'Japan', value: 4400 }
+    ];
+    const today = new Date(); const arr=[];
+    for(let i=27;i>=0;i--){ const d=new Date(today); d.setDate(d.getDate()-i); arr.push({ date: d.toISOString().slice(0,10), value: 2000+Math.round(1200*Math.sin((i/28)*Math.PI*2)+Math.random()*200) }); }
+    analytics.timeseries = arr;
+  }
+  function mockCities(code){
+    const sample = {
+      'US':['New York','Los Angeles','Chicago','Houston','Phoenix','Dallas','San Jose','Seattle','Atlanta','Miami'],
+      'GB':['London','Birmingham','Manchester','Leeds','Glasgow','Liverpool','Bristol','Edinburgh','Sheffield','Cardiff'],
+      'IN':['Delhi','Mumbai','Bengaluru','Hyderabad','Ahmedabad','Chennai','Kolkata','Pune','Surat','Jaipur']
+    };
+    const names = sample[code] || ['City A','City B','City C','City D','City E','City F','City G','City H'];
+    return names.map((n,i)=>({ city:n, value: Math.round(5000/(i+1) + Math.random()*300) }));
+  }
+
+  // ==========
+  // Interactions: click country on world map -> load top cities
+  // ==========
+  worldCanvas.addEventListener('mousemove', (e)=>{
+    if(!analytics.countries?.length) return;
+    const rect = worldCanvas.getBoundingClientRect();
+    const x = e.clientX - rect.left; const y = e.clientY - rect.top;
+    const w = worldCanvas.clientWidth; const h = worldCanvas.clientHeight;
+    // find nearest centroid among countries displayed
+    let best=null, bestDist=1e9;
+    analytics.countries.slice(0,30).forEach(c=>{
+      const feat = findCountryFeatureByCodeOrName(c.countryCode, c.countryName); if(!feat) return;
+      const [cx,cy]=centroidOfFeature(feat,w,h); const dx=cx-x, dy=cy-y; const d=dx*dx+dy*dy; if(d<bestDist){ bestDist=d; best={ c, cx, cy}; }
+    });
+    if(best && Math.sqrt(bestDist) < 28){
+      tipWorld.style.display='block'; tipWorld.style.left = (x+10)+'px'; tipWorld.style.top=(y-10)+'px';
+      tipWorld.textContent = `${best.c.countryName} (${best.c.countryCode}) — ${best.c.value.toLocaleString()} ${metric}`;
+    } else { tipWorld.style.display='none'; }
+  });
+
+  worldCanvas.addEventListener('mouseleave', ()=>{ tipWorld.style.display='none'; });
+
+  worldCanvas.addEventListener('click', (e)=>{
+    if(!analytics.countries?.length) return;
+    const rect = worldCanvas.getBoundingClientRect();
+    const x = e.clientX - rect.left; const y = e.clientY - rect.top;
+    const w = worldCanvas.clientWidth; const h = worldCanvas.clientHeight;
+    let best=null, bestDist=1e9;
+    analytics.countries.slice(0,30).forEach(c=>{
+      const feat = findCountryFeatureByCodeOrName(c.countryCode, c.countryName); if(!feat) return;
+      const [cx,cy]=centroidOfFeature(feat,w,h); const dx=cx-x, dy=cy-y; const d=dx*dx+dy*dy; if(d<bestDist){ bestDist=d; best={ c, cx, cy}; }
+    });
+    if(best && Math.sqrt(bestDist) < 28){
+      loadCountryCities(best.c.countryCode, best.c.countryName);
+      // raise DEFCON for drama
+      if(defconLevel>2) setDefcon(defconLevel-1);
+      trackCount++; trackCountDisplay.textContent = trackCount;
+    }
+  });
+
+  // ==========
+  // Commands
+  // ==========
+  const history=[]; let histIdx=-1;
+  function help(){
+    printLine('AVAILABLE COMMANDS:');
+    printLine('  HELP                         - Show commands');
+    printLine('  METRIC [VIEWS|WATCH|SUBS]    - Change metric');
+    printLine('  RANGE [7|28|90|365]          - Change time range (days)');
+    printLine('  COUNTRY [ISO2]               - Load country detail by ISO code (e.g., COUNTRY US)');
+    printLine('  STATUS                       - Current status');
+    printLine('  CLEAR                        - Clear terminal');
+    printLine('');
+  }
+  function status(){
+    printLine('SYSTEM STATUS:');
+    printLine(`  DEFCON LEVEL: ${defconLevel}`);
+    printLine(`  TRACKS: ${trackCount}`);
+    printLine(`  METRIC: ${metric}`);
+    printLine(`  RANGE: ${days} days`);
+    printLine('');
+  }
+
+  commandInput.addEventListener('keydown', (e)=>{
+    if(e.key==='Enter'){
+      const raw = commandInput.value.trim(); if(!raw) return;
+      history.push(raw); histIdx=history.length; commandInput.value='';
+      lastInputDisplay.textContent = raw; printLine('> '+raw);
+      const parts = raw.split(/\s+/); const cmd = (parts[0]||'').toUpperCase();
+      if(cmd==='HELP') help();
+      else if(cmd==='CLEAR'){ terminalOutput.innerHTML=''; }
+      else if(cmd==='STATUS') status();
+      else if(cmd==='METRIC'){
+        const m=(parts[1]||'').toUpperCase();
+        if(m==='VIEWS') metric='views'; else if(m==='WATCH') metric='watchTime'; else if(m==='SUBS') metric='subscribers'; else { printLine('ERROR: METRIC VIEWS|WATCH|SUBS'); return; }
+        metricBadge.textContent = (metric==='views'?'Views':metric==='watchTime'?'Watch Time':'Subscribers');
+        loadAnalytics();
+      }
+      else if(cmd==='RANGE'){
+        const d=parseInt(parts[1],10); if([7,28,90,365].includes(d)){ days=d; loadAnalytics(); } else printLine('ERROR: RANGE 7|28|90|365');
+      }
+      else if(cmd==='COUNTRY'){
+        const c=(parts[1]||'').toUpperCase(); if(!c) { printLine('ERROR: COUNTRY [ISO2]'); return; }
+        const item = analytics.countries.find(x=>x.countryCode===c); if(!item){ printLine('ERROR: UNKNOWN/UNRANKED COUNTRY'); return; }
+        loadCountryCities(item.countryCode, item.countryName);
+      }
+      else { printLine('UNKNOWN COMMAND. TYPE HELP'); }
+      printLine('');
+    } else if(e.key==='ArrowUp'){ if(histIdx>0){ histIdx--; commandInput.value=history[histIdx]||''; setTimeout(()=>commandInput.setSelectionRange(9999,9999)); e.preventDefault(); } }
+      else if(e.key==='ArrowDown'){ if(histIdx<history.length){ histIdx++; commandInput.value=history[histIdx]||''; setTimeout(()=>commandInput.setSelectionRange(9999,9999)); e.preventDefault(); } }
+  });
+
+  // ==========
+  // Boot
+  // ==========
+  function boot(){
+    printLine('WOPR (WAR OPERATION PLAN RESPONSE) // CHANNEL OPS MODE');
+    printLine('INITIALIZING MAPS...');
+    printLine('LINKING YOUTUBE ANALYTICS...');
+    printLine('TYPE HELP FOR COMMANDS. CLICK A COUNTRY TO DRILL DOWN.');
+    printLine('');
+  }
+
+  // load world geojson
+  fetch('https://raw.githubusercontent.com/johan/world.geo.json/master/countries.geo.json')
+    .then(r=>r.json()).then(geo=>{ worldGeo=geo; resizeAll(); }).catch(()=>{});
+
+  boot();
+  resizeAll();
+  loadAnalytics();
+
+  // =====================
+  // Backend server stub (Node/Express + googleapis) — put in server.js
+  // =====================
+  /*
+  // server.js
+  import express from 'express';
+  import fetch from 'node-fetch';
+  import { google } from 'googleapis';
+  const app = express();
+
+  // OAuth2 setup — create OAuth Client ID + enable APIs: YouTube Data API v3, YouTube Analytics API
+  // Store tokens securely; do NOT expose in frontend. Use a service account with a linked content owner if applicable, or 3-legged OAuth for your channel account.
+  const oauth2Client = new google.auth.OAuth2(process.env.GOOGLE_CLIENT_ID, process.env.GOOGLE_CLIENT_SECRET, process.env.GOOGLE_REDIRECT_URI);
+  oauth2Client.setCredentials({ refresh_token: process.env.GOOGLE_REFRESH_TOKEN });
+
+  const youtubeAnalytics = google.youtubeAnalytics({ version: 'v2', auth: oauth2Client });
+
+  function parseDays(req){ return Math.max(1, parseInt(req.query.days||'28',10)); }
+  function dateRange(days){ const end = new Date(); const start = new Date(); start.setDate(end.getDate()-days); return { start: start.toISOString().slice(0,10), end: end.toISOString().slice(0,10) }; }
+
+  app.get('/api/yta/overview', async (req,res)=>{
+    const { start, end } = dateRange(parseDays(req));
+    const report = await youtubeAnalytics.reports.query({
+      ids: 'channel==MINE', startDate: start, endDate: end, metrics: 'views,estimatedMinutesWatched,subscribersGained,estimatedRevenue'
+    });
+    const row = report.data.rows?.[0] || [0,0,0,0];
+    res.json({
+      views: row[0], watchTimeHours: Math.round((row[1]/60)*10)/10, newSubscribers: row[2], estRevenue: row[3]
+    });
+  });
+
+  app.get('/api/yta/countries', async (req,res)=>{
+    const metric = (req.query.metric||'views');
+    const metricMap = { views:'views', watchTime:'estimatedMinutesWatched', subscribers:'subscribersGained' };
+    const apiMetric = metricMap[metric] || 'views';
+    const { start, end } = dateRange(parseDays(req));
+    const report = await youtubeAnalytics.reports.query({
+      ids: 'channel==MINE', startDate: start, endDate: end, dimensions: 'country', metrics: apiMetric, sort: `-${apiMetric}`
+    });
+    const rows = report.data.rows || [];
+    const out = rows.map(([code,val])=>({ countryCode: code, countryName: code, value: Number(val) }));
+    // Optional: map ISO2 code -> proper country name using your own dictionary
+    res.json(out);
+  });
+
+  app.get('/api/yta/country/:code/cities', async (req,res)=>{
+    const metric = (req.query.metric||'views');
+    const metricMap = { views:'views', watchTime:'estimatedMinutesWatched', subscribers:'subscribersGained' };
+    const apiMetric = metricMap[metric] || 'views';
+    const { start, end } = dateRange(parseDays(req));
+    const report = await youtubeAnalytics.reports.query({
+      ids: 'channel==MINE', startDate: start, endDate: end, dimensions: 'city', filters: `country==${req.params.code}`, metrics: apiMetric, sort: `-${apiMetric}`
+    });
+    const rows = report.data.rows || []; res.json(rows.map(([city,val])=>({ city, value:Number(val) })));
+  });
+
+  app.get('/api/yta/timeseries', async (req,res)=>{
+    const metric = (req.query.metric||'views');
+    const metricMap = { views:'views', watchTime:'estimatedMinutesWatched', subscribers:'subscribersGained' };
+    const apiMetric = metricMap[metric] || 'views';
+    const { start, end } = dateRange(parseDays(req));
+    const report = await youtubeAnalytics.reports.query({
+      ids: 'channel==MINE', startDate: start, endDate: end, dimensions: 'day', metrics: apiMetric
+    });
+    const rows = report.data.rows || []; res.json(rows.map(([date,val])=>({ date, value:Number(val) })));
+  });
+
+  app.listen(process.env.PORT||3000, ()=> console.log('API listening'));
+  */
+  </script>
+</body>
+</html>
