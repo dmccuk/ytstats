@@ -71,7 +71,11 @@
 <body>
   <div id="header">
     <div>W.O.P.R // CHANNEL OPERATIONS</div>
-    <div>CONNECTION: <span id="connection-status">STANDBY</span></div>
+      <div style="display:flex;align-items:center;gap:12px">
+      CONNECTION: <span id="connection-status">STANDBY</span>
+      <label class="badge" for="json-input" style="cursor:pointer">IMPORT JSON</label>
+      <input id="json-input" type="file" accept="application/json" style="display:none" />
+    </div>
   </div>
 
   <div id="main-container">
