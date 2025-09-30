@@ -343,6 +343,8 @@
     mostWatchedRecent: null       // {title, videoId, viewsInRange, likes, viewsTotal}
   };
 
+  const localGeoByCountry = new Map();
+
   const iso2ToNameOverride = {
     'US':'United States of America', 'GB':'United Kingdom', 'RU':'Russian Federation',
     'CI':'Côte d\'Ivoire', 'CD':'Democratic Republic of the Congo', 'CG':'Republic of the Congo',
@@ -620,6 +622,23 @@
 
   async function loadCountryCities(code, name){
     if(viewMode!=='GEO') return;
+    if(dataMode==='LOCAL'){
+      const cached = localGeoByCountry.get(code);
+      if(cached){
+        const detailName = cached.name || name || code;
+        analytics.countryDetail = { code, name: detailName, cities: cached.cities.slice(0) };
+        const title = document.querySelector('#country-detail-box .monitor-title');
+        title.textContent = `COUNTRY DETAIL // ${detailName} (${code})`;
+        drawAll();
+        return;
+      }
+      const fallbackName = name || code;
+      analytics.countryDetail = { code, name: fallbackName, cities: [] };
+      const title = document.querySelector('#country-detail-box .monitor-title');
+      title.textContent = `COUNTRY DETAIL // ${fallbackName} (${code})`;
+      drawAll();
+      return;
+    }
     try{
       const cities = await fetchJSON(`/api/yta/country/${code}/cities?metric=${metric}&days=${days}`);
       analytics.countryDetail = { code, name, cities:cities.sort((a,b)=>b.value-a.value) };
@@ -804,6 +823,7 @@
   function humanLabel(s){ return (s||'').replace(/\s+/g,' ').trim(); }
 
   function aggregateFromPublicJSON(payload){
+    localGeoByCountry.clear();
     const uploads = Array.isArray(payload.uploads)? payload.uploads : [];
     const safe = uploads.map(u=>({
       id: u.id,
@@ -838,7 +858,44 @@
     });
     const ts = [...byDay.keys()].sort().map(d=>({ date:d, value: byDay.get(d) }));
 
-    return { overview, topVideos, recent, ts };
+    const geoCountriesRaw = Array.isArray(payload?.geo?.countries) ? payload.geo.countries : [];
+    const geoCitiesRaw = payload?.geo?.cities && typeof payload.geo.cities === 'object' ? payload.geo.cities : {};
+
+    const countries = geoCountriesRaw
+      .map(c=>({
+        countryCode: (c.countryCode || '').toUpperCase(),
+        countryName: humanLabel(c.countryName || c.countryCode || ''),
+        value: Number(c.value||0)
+      }))
+      .filter(c=>c.countryCode && !Number.isNaN(c.value))
+      .sort((a,b)=>b.value-a.value);
+
+    const cityEntries = Object.entries(geoCitiesRaw||{});
+
+    countries.forEach(c=>{
+      const key = c.countryCode;
+      const rawCities = Array.isArray(geoCitiesRaw?.[key]) ? geoCitiesRaw[key] : [];
+      const cities = rawCities
+        .map(city=>({ city: humanLabel(city.city || ''), value: Number(city.value||0) }))
+        .filter(city=>city.city && !Number.isNaN(city.value))
+        .sort((a,b)=>b.value-a.value);
+      localGeoByCountry.set(key, { name: c.countryName, cities });
+    });
+
+    cityEntries.forEach(([code, list])=>{
+      if(localGeoByCountry.has(code)) return;
+      const rawCities = Array.isArray(list) ? list : [];
+      const cities = rawCities
+        .map(city=>({ city: humanLabel(city.city || ''), value: Number(city.value||0) }))
+        .filter(city=>city.city && !Number.isNaN(city.value))
+        .sort((a,b)=>b.value-a.value);
+      if(!cities.length) return;
+      const matchedCountry = countries.find(c=>c.countryCode===code);
+      const name = matchedCountry?.countryName || code;
+      localGeoByCountry.set(code, { name, cities });
+    });
+
+    return { overview, topVideos, recent, ts, countries };
   }
 
   function applyPublicJSON(payload){
@@ -850,11 +907,13 @@
     const agg = aggregateFromPublicJSON(payload);
     analytics.overview = agg.overview;
     analytics.timeseries = agg.ts;
+    analytics.countries = agg.countries || [];
+    analytics.countryDetail = { code:null, name:'', cities:[] };
 
-    // In LOCAL mode, repurpose panels to Top/Recent by default
+    // In LOCAL mode, repurpose panels to Top/Recent if no geo data is present
     analytics.topAllTime = agg.topVideos;
     analytics.mostWatchedRecent = agg.recent;
-    viewMode = 'TOP';
+    viewMode = analytics.countries.length ? 'GEO' : 'TOP';
 
     drawAll();
   }
