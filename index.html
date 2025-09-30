@@ -244,8 +244,10 @@
   function strokeNeon(ctx, draw){
     ctx.save();
     ctx.lineJoin='round'; ctx.lineCap='round';
-    ctx.shadowColor='var(--phosphor-soft)';
-    ctx.shadowBlur=4; ctx.globalAlpha=.35; ctx.strokeStyle=getComputedStyle(document.documentElement).getPropertyValue('--phosphor-soft')||'#2fe12f'; ctx.lineWidth=1.1; draw(); ctx.stroke();
+    const style = getComputedStyle(document.documentElement);
+    const phosphorSoft = style.getPropertyValue('--phosphor-soft').trim() || '#2fe12f';
+    ctx.shadowColor=phosphorSoft;
+    ctx.shadowBlur=4; ctx.globalAlpha=.35; ctx.strokeStyle=phosphorSoft; ctx.lineWidth=1.1; draw(); ctx.stroke();
     ctx.shadowBlur=0; ctx.globalAlpha=.9; ctx.lineWidth=.7; ctx.strokeStyle='rgba(47,225,47,0.9)'; draw(); ctx.stroke();
     ctx.restore();
   }
