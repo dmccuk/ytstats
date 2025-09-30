@@ -51,9 +51,11 @@
 
     /* Right visuals grid (world map ~2/3 width) */
     #right { position:absolute; inset:0; padding: 10px; background: rgba(5, 15, 5, 0.5); display:grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); grid-auto-rows: 1fr; gap: 10px; align-items:stretch; }
-    #top-row { display:flex; flex-direction:column; gap:10px; min-height:0; grid-column: 1; }
+    #top-row { display:flex; flex-direction:column; gap:10px; min-height:0; grid-column: 1; grid-row: 1 / span 2; }
     #bottom-row { grid-column: 2; display:grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); grid-auto-rows: minmax(180px, 1fr); gap:10px; align-content:start; overflow:auto; padding-right:2px; }
     #top-row .monitor-box, #bottom-row .monitor-box { min-height:0; }
+    #world-box { flex: 1 1 auto; min-height:0; }
+    #overview-box { flex: 0 0 auto; min-height: 180px; }
     .monitor-box.wide { grid-column: span 2; }
 
     .monitor-box { border: 1px solid var(--phosphor); background: #000; position: relative; box-shadow: inset 0 0 18px rgba(51,255,51,0.08); overflow:hidden; display:flex; flex-direction:column; min-height:0; }
@@ -177,6 +179,11 @@
           <canvas id="world-canvas"></canvas>
           <div id="tip-world" class="tip"></div>
         </div>
+        <div id="overview-box" class="monitor-box">
+          <div class="monitor-title" id="overview-title">CHANNEL OVERVIEW</div>
+          <div class="scan-line"></div>
+          <ol id="overview-list" class="monitor-list metrics" aria-live="polite"></ol>
+        </div>
       </div>
       <div id="bottom-row">
         <div id="top-countries-box" class="monitor-box wide">
@@ -264,6 +271,7 @@
 
   const topBoxTitle = document.getElementById('top-box-title');
   const detailBoxTitle = document.getElementById('detail-box-title');
+  const overviewTitle = document.getElementById('overview-title');
   const worldTitle = document.getElementById('world-title');
   const tsTitle = document.getElementById('ts-title');
   const topList = document.getElementById('top-list');
@@ -275,6 +283,7 @@
   const trafficList = document.getElementById('traffic-list');
   const playbackList = document.getElementById('playback-list');
   const tsDetailedList = document.getElementById('timeseries-detailed-list');
+  const overviewList = document.getElementById('overview-list');
 
   // canvases
   const worldCanvas = document.getElementById('world-canvas');
@@ -554,7 +563,14 @@
     subscribedStatus:[],
     trafficSources:[],
     deviceTypes:[],
-    playbackLocations:[]
+    playbackLocations:[],
+    breakdowns: {
+      subscribedStatus: [],
+      trafficSources: [],
+      deviceTypes: [],
+      playbackLocations: [],
+      demographics: null
+    }
   };
 
   const localGeoByCountry = new Map();
@@ -725,6 +741,137 @@
     return num.toLocaleString();
   }
 
+  function formatDuration(seconds){
+    const total = Math.max(0, Math.floor(Number(seconds)||0));
+    const hours = Math.floor(total / 3600);
+    const minutes = Math.floor((total % 3600) / 60);
+    const secs = total % 60;
+    const parts = [];
+    if(hours) parts.push(`${hours}h`);
+    if(minutes || hours) parts.push(`${minutes}m`);
+    parts.push(`${secs}s`);
+    return parts.join(' ');
+  }
+
+  function pickFirstString(item, keys){
+    for(const key of keys){
+      const value = key && item ? item[key] : undefined;
+      if(value === undefined || value === null) continue;
+      const str = String(value).trim();
+      if(str) return str;
+    }
+    return '';
+  }
+
+  function pickFirstNumber(item, keys){
+    for(const key of keys){
+      const value = key && item ? item[key] : undefined;
+      if(value === undefined || value === null) continue;
+      const num = Number(value);
+      if(!Number.isNaN(num)) return num;
+    }
+    return 0;
+  }
+
+  const BREAKDOWN_CONFIG = {
+    subscribedStatus: {
+      labelKeys: ['label','status','key','name'],
+      valueKeys: ['views','value','count','minutes','hours'],
+      keyKeys: ['status','key','label']
+    },
+    trafficSources: {
+      labelKeys: ['label','source','trafficSourceType','key','name'],
+      valueKeys: ['views','value','count','minutes','hours'],
+      keyKeys: ['key','source','trafficSourceType','label']
+    },
+    deviceTypes: {
+      labelKeys: ['label','deviceType','device','key','name','type'],
+      valueKeys: ['views','value','count'],
+      keyKeys: ['deviceType','device','key','label']
+    },
+    playbackLocations: {
+      labelKeys: ['label','location','playbackLocationType','key','name'],
+      valueKeys: ['views','value','count'],
+      keyKeys: ['location','playbackLocationType','key','label']
+    },
+    demographics: {
+      labelKeys: ['label','name','gender','ageGroup','age','group'],
+      valueKeys: ['views','value','count','minutes','hours'],
+      keyKeys: ['gender','ageGroup','age','label']
+    },
+    default: {
+      labelKeys: ['label','name','key','status','source','deviceType','location'],
+      valueKeys: ['value','views','count']
+    }
+  };
+
+  function normalizeBreakdownArray(raw, type){
+    const pref = BREAKDOWN_CONFIG[type] || BREAKDOWN_CONFIG.default;
+    let rows = Array.isArray(raw) ? raw : [];
+    if(type==='demographics' && raw && typeof raw === 'object' && !Array.isArray(raw)){
+      rows = [];
+      const gender = raw.gender || raw.genders;
+      const age = raw.age || raw.ageGroups || raw.ageRanges;
+      if(Array.isArray(gender)) rows = rows.concat(gender);
+      if(Array.isArray(age)) rows = rows.concat(age);
+    }
+    const labelKeys = pref.labelKeys || BREAKDOWN_CONFIG.default.labelKeys;
+    const valueKeys = pref.valueKeys || BREAKDOWN_CONFIG.default.valueKeys;
+    const keyKeys = pref.keyKeys || labelKeys;
+    return rows
+      .map(item => {
+        const label = pickFirstString(item, labelKeys);
+        if(!label) return null;
+        const value = pickFirstNumber(item, valueKeys);
+        const key = pickFirstString(item, keyKeys) || label;
+        const entry = {
+          label,
+          value,
+          key,
+          raw: item || null
+        };
+        if(item && item.status) entry.status = String(item.status);
+        if(item && (item.location || item.playbackLocationType)) entry.location = String(item.location ?? item.playbackLocationType);
+        if(item && (item.deviceType || item.device)) entry.deviceType = String(item.deviceType ?? item.device);
+        if(item && (item.source || item.trafficSourceType)) entry.source = String(item.source ?? item.trafficSourceType);
+        if(item && (item.gender)) entry.gender = String(item.gender);
+        if(item && (item.ageGroup || item.age)) entry.ageGroup = String(item.ageGroup ?? item.age);
+        return entry;
+      })
+      .filter(Boolean)
+      .sort((a,b)=>b.value-a.value);
+  }
+
+  function normalizeDemographicsPayload(raw){
+    if(!raw || typeof raw !== 'object') return null;
+    const normalized = {};
+    const gender = raw.gender || raw.genders;
+    const age = raw.age || raw.ageGroups || raw.ageRanges;
+    if(Array.isArray(gender)) normalized.gender = normalizeBreakdownArray(gender, 'demographics');
+    if(Array.isArray(age)) normalized.age = normalizeBreakdownArray(age, 'demographics');
+    return Object.keys(normalized).length ? normalized : null;
+  }
+
+  function applyBreakdownData(source={}){
+    const breakdowns = analytics.breakdowns || (analytics.breakdowns = {});
+    breakdowns.subscribedStatus = normalizeBreakdownArray(source.subscribedStatus, 'subscribedStatus');
+    breakdowns.trafficSources = normalizeBreakdownArray(source.trafficSources, 'trafficSources');
+    breakdowns.deviceTypes = normalizeBreakdownArray(source.deviceTypes, 'deviceTypes');
+    breakdowns.playbackLocations = normalizeBreakdownArray(source.playbackLocations, 'playbackLocations');
+    breakdowns.demographics = normalizeDemographicsPayload(source.demographics);
+
+    analytics.subscribedStatus = breakdowns.subscribedStatus;
+    analytics.trafficSources = breakdowns.trafficSources;
+    analytics.deviceTypes = breakdowns.deviceTypes;
+    analytics.playbackLocations = breakdowns.playbackLocations;
+  }
+
+  function getBreakdownRows(type){
+    const rows = analytics.breakdowns?.[type];
+    if(Array.isArray(rows)) return rows.slice();
+    return [];
+  }
+
   function renderGenericList(listEl, items, options={}){
     if(!listEl) return;
     listEl.innerHTML = '';
@@ -871,6 +1018,95 @@
     topList.appendChild(frag);
   }
 
+  function renderOverview(){
+    if(!overviewList) return;
+    overviewList.innerHTML = '';
+    const ov = analytics.overview;
+    if(!ov){
+      const empty = document.createElement('li');
+      empty.className = 'empty';
+      empty.textContent = 'NO DATA';
+      overviewList.appendChild(empty);
+      if(overviewTitle) overviewTitle.textContent = 'CHANNEL OVERVIEW';
+      return;
+    }
+
+    if(overviewTitle){
+      const title = channelTitle ? `CHANNEL OVERVIEW // ${channelTitle}` : 'CHANNEL OVERVIEW';
+      overviewTitle.textContent = title;
+    }
+
+    const addMetricRow = (label, value, meta=[]) => {
+      if(!label) return;
+      const li = document.createElement('li');
+      const head = document.createElement('div');
+      head.className = 'row-head';
+      const labelSpan = document.createElement('span');
+      labelSpan.className = 'label';
+      labelSpan.textContent = label;
+      const valueSpan = document.createElement('span');
+      valueSpan.className = 'value';
+      valueSpan.textContent = value || '—';
+      head.append(labelSpan, valueSpan);
+      li.appendChild(head);
+      if(meta.length){
+        const metaDiv = document.createElement('div');
+        metaDiv.className = 'meta';
+        meta.forEach(text=>{
+          if(!text) return;
+          const span = document.createElement('span');
+          span.textContent = text;
+          metaDiv.appendChild(span);
+        });
+        if(metaDiv.childNodes.length){
+          li.appendChild(metaDiv);
+        }
+      }
+      overviewList.appendChild(li);
+    };
+
+    const views = ov.views ?? ov.totalViews ?? ov.viewCount;
+    if(views !== undefined){
+      addMetricRow('Views', formatMetricValue(views));
+    }
+
+    const watchTimeHours = ov.watchTimeHours ?? ov.watchTime ?? (typeof ov.watchTimeMinutes === 'number' ? ov.watchTimeMinutes/60 : undefined);
+    if(watchTimeHours !== undefined){
+      addMetricRow('Watch Time', `${formatMetricValue(watchTimeHours, 1)} h`);
+    }
+
+    const avgSeconds = ov.avgViewDurationSec ?? ov.avgViewDurationSeconds ?? (typeof ov.avgViewDuration === 'number' ? ov.avgViewDuration : undefined);
+    const avgDurationDisplay = typeof avgSeconds === 'number' && !Number.isNaN(avgSeconds)
+      ? formatDuration(avgSeconds)
+      : (typeof ov.avgViewDuration === 'string' ? ov.avgViewDuration : null);
+    if(avgDurationDisplay){
+      addMetricRow('Avg View Duration', avgDurationDisplay);
+    }
+
+    const gained = Number.isFinite(Number(ov.subscribersGained)) ? Number(ov.subscribersGained) : (Number.isFinite(Number(ov.newSubscribers)) ? Number(ov.newSubscribers) : undefined);
+    const lost = Number.isFinite(Number(ov.subscribersLost)) ? Number(ov.subscribersLost) : undefined;
+    const netProvided = Number.isFinite(Number(ov.netSubscribers)) ? Number(ov.netSubscribers) : undefined;
+    const fallbackSubs = Number.isFinite(Number(ov.subscribers)) ? Number(ov.subscribers) : undefined;
+    const net = netProvided !== undefined ? netProvided : (gained !== undefined || lost !== undefined)
+      ? (Number(gained||0) - Number(lost||0))
+      : fallbackSubs;
+    if(gained !== undefined || lost !== undefined || net !== undefined){
+      const meta = [];
+      if(gained !== undefined) meta.push(`+${formatMetricValue(gained)} gained`);
+      if(lost !== undefined && lost>0) meta.push(`-${formatMetricValue(lost)} lost`);
+      const valueText = net !== undefined ? `${net>=0?'+':''}${formatMetricValue(net)}` : meta[0] || '';
+      addMetricRow('Subscribers', valueText, meta);
+    }
+
+    if(ov.estRevenue !== undefined){
+      addMetricRow('Est. Revenue', `$${formatMetricValue(ov.estRevenue, 2)}`);
+    }
+
+    if(ov.videos !== undefined){
+      addMetricRow('Videos', formatMetricValue(ov.videos));
+    }
+  }
+
   topList?.addEventListener('click', (event)=>{
     const li = event.target instanceof HTMLElement ? event.target.closest('li') : null;
     if(!li || li.classList.contains('empty')) return;
@@ -899,9 +1135,25 @@
         detailBoxTitle.textContent = 'COUNTRY DETAIL';
       }
       worldTitle.textContent = 'GLOBAL THEATER // AUDIENCE BY COUNTRY';
-    } else {
+    } else if(viewMode==='TOP'){
       topBoxTitle.textContent = 'TOP 5 VIDEOS (ALL-TIME)';
       detailBoxTitle.textContent = 'MOST WATCHED (RECENT)';
+      worldTitle.textContent = 'GLOBAL THEATER';
+    } else if(viewMode==='SOURCE'){
+      topBoxTitle.textContent = `TRAFFIC SOURCES (${days}D)`;
+      detailBoxTitle.textContent = 'TRAFFIC SOURCES';
+      worldTitle.textContent = 'GLOBAL THEATER';
+    } else if(viewMode==='DEVICE'){
+      topBoxTitle.textContent = `DEVICE TYPES (${days}D)`;
+      detailBoxTitle.textContent = 'DEVICE TYPES';
+      worldTitle.textContent = 'GLOBAL THEATER';
+    } else if(viewMode==='PLAYBACK'){
+      topBoxTitle.textContent = `PLAYBACK LOCATIONS (${days}D)`;
+      detailBoxTitle.textContent = 'PLAYBACK LOCATIONS';
+      worldTitle.textContent = 'GLOBAL THEATER';
+    } else if(viewMode==='DEMO'){
+      topBoxTitle.textContent = `SUBSCRIBER STATUS (${days}D)`;
+      detailBoxTitle.textContent = 'SUBSCRIBED VS NOT';
       worldTitle.textContent = 'GLOBAL THEATER';
     }
 
@@ -924,11 +1176,23 @@
       tsDetailedTitle.textContent = `DAILY DETAIL (${metricInfo.label})`;
     }
 
+    renderOverview();
     drawWorld(worldCtx, worldCanvas.clientWidth, worldCanvas.clientHeight);
 
-    const topItems = viewMode==='GEO'
-      ? (Array.isArray(analytics.countries) ? analytics.countries.slice(0, 10) : [])
-      : (Array.isArray(analytics.topAllTime) ? analytics.topAllTime.slice(0, 10) : []);
+    let topItems = [];
+    if(viewMode==='GEO'){
+      topItems = Array.isArray(analytics.countries) ? analytics.countries.slice(0,10) : [];
+    } else if(viewMode==='TOP'){
+      topItems = Array.isArray(analytics.topAllTime) ? analytics.topAllTime.slice(0,10) : [];
+    } else if(viewMode==='SOURCE'){
+      topItems = getBreakdownRows('trafficSources').slice(0,10);
+    } else if(viewMode==='DEVICE'){
+      topItems = getBreakdownRows('deviceTypes').slice(0,10);
+    } else if(viewMode==='PLAYBACK'){
+      topItems = getBreakdownRows('playbackLocations').slice(0,10);
+    } else if(viewMode==='DEMO'){
+      topItems = getBreakdownRows('subscribedStatus').slice(0,10);
+    }
     renderTopList(topItems, viewMode);
 
     // Bottom-middle panel
@@ -936,7 +1200,7 @@
       if(analytics.countryDetail?.cities?.length){
         drawBars(countryCtx, analytics.countryDetail.cities.slice(0,10), d=>d.city, d=>d.value);
       } else { clearAndGrid(countryCtx, countryCanvas.clientWidth, countryCanvas.clientHeight); }
-    } else {
+    } else if(viewMode==='TOP'){
       if(analytics.mostWatchedRecent){
         const r = analytics.mostWatchedRecent;
         const rows = [
@@ -946,6 +1210,24 @@
         ];
         drawBars(countryCtx, rows, d=>d.city, d=>d.value);
       } else { clearAndGrid(countryCtx, countryCanvas.clientWidth, countryCanvas.clientHeight); }
+    } else if(viewMode==='SOURCE'){
+      const rows = getBreakdownRows('trafficSources').map(d=>({ city: d.label, value: d.value }));
+      if(rows.length) drawBars(countryCtx, rows.slice(0,12), d=>d.city, d=>d.value);
+      else clearAndGrid(countryCtx, countryCanvas.clientWidth, countryCanvas.clientHeight);
+    } else if(viewMode==='DEVICE'){
+      const rows = getBreakdownRows('deviceTypes').map(d=>({ city: d.label, value: d.value }));
+      if(rows.length) drawBars(countryCtx, rows, d=>d.city, d=>d.value);
+      else clearAndGrid(countryCtx, countryCanvas.clientWidth, countryCanvas.clientHeight);
+    } else if(viewMode==='PLAYBACK'){
+      const rows = getBreakdownRows('playbackLocations').map(d=>({ city: d.label, value: d.value }));
+      if(rows.length) drawBars(countryCtx, rows, d=>d.city, d=>d.value);
+      else clearAndGrid(countryCtx, countryCanvas.clientWidth, countryCanvas.clientHeight);
+    } else if(viewMode==='DEMO'){
+      const rows = getBreakdownRows('subscribedStatus').map(d=>({ city: d.label, value: d.value }));
+      if(rows.length) drawBars(countryCtx, rows, d=>d.city, d=>d.value);
+      else clearAndGrid(countryCtx, countryCanvas.clientWidth, countryCanvas.clientHeight);
+    } else {
+      clearAndGrid(countryCtx, countryCanvas.clientWidth, countryCanvas.clientHeight);
     }
 
     // Bottom-right panel
@@ -953,10 +1235,18 @@
     if(timeseriesData.length) drawLine(timeseriesCtx, timeseriesData);
     else clearAndGrid(timeseriesCtx, timeseriesCanvas.clientWidth, timeseriesCanvas.clientHeight);
 
-    if(subscribedCtx) drawBars(subscribedCtx, Array.isArray(analytics.subscribedStatus) ? analytics.subscribedStatus.slice(0,8) : [], d=>d.label, d=>d.value);
-    if(devicesCtx) drawBars(devicesCtx, Array.isArray(analytics.deviceTypes) ? analytics.deviceTypes.slice(0,8) : [], d=>d.label, d=>d.value);
-    renderGenericList(trafficList, analytics.trafficSources, { limit: 8 });
-    renderGenericList(playbackList, analytics.playbackLocations, { limit: 8 });
+    if(subscribedCtx){
+      const subscribedRows = getBreakdownRows('subscribedStatus');
+      if(subscribedRows.length) drawBars(subscribedCtx, subscribedRows.slice(0,8), d=>d.label, d=>d.value);
+      else clearAndGrid(subscribedCtx, subscribedCtx.canvas.clientWidth, subscribedCtx.canvas.clientHeight);
+    }
+    if(devicesCtx){
+      const deviceRows = getBreakdownRows('deviceTypes');
+      if(deviceRows.length) drawBars(devicesCtx, deviceRows.slice(0,8), d=>d.label, d=>d.value);
+      else clearAndGrid(devicesCtx, devicesCtx.canvas.clientWidth, devicesCtx.canvas.clientHeight);
+    }
+    renderGenericList(trafficList, getBreakdownRows('trafficSources'), { limit: 8 });
+    renderGenericList(playbackList, getBreakdownRows('playbackLocations'), { limit: 8 });
     renderTimeseriesDetailedList(tsDetailedList, metric);
 
     // Badge
@@ -996,15 +1286,6 @@
     try{
       dataMode = 'LIVE';
       connectionStatus.textContent = 'LIVE DATA';
-      const normalizePairs = (arr) => Array.isArray(arr)
-        ? arr.map(item=>({
-            label: String(item?.label || item?.name || item?.title || '').trim(),
-            value: Number(item?.value ?? item?.views ?? item?.count ?? 0)
-          }))
-          .filter(item=>item.label && !Number.isNaN(item.value))
-          .sort((a,b)=>b.value-a.value)
-        : [];
-
       const normalizeDetailedRow = (row) => {
         if(!row || typeof row !== 'object') return null;
         const date = (row.date || row.day || row.startDate || '').toString().slice(0,10);
@@ -1033,10 +1314,12 @@
       analytics.timeseriesDetailed = Array.isArray(tsDetailed)
         ? tsDetailed.map(normalizeDetailedRow).filter(Boolean)
         : [];
-      analytics.subscribedStatus = normalizePairs(subscribedStatus);
-      analytics.trafficSources = normalizePairs(trafficSources);
-      analytics.deviceTypes = normalizePairs(deviceTypes);
-      analytics.playbackLocations = normalizePairs(playbackLocations);
+      applyBreakdownData({
+        subscribedStatus,
+        trafficSources,
+        deviceTypes,
+        playbackLocations
+      });
 
       // Load top videos extras (likes are total in backend)
       await loadTopAllTime();
@@ -1189,6 +1472,18 @@
         { label:'Channel Page', value: 19000 },
         { label:'External', value: 9500 }
       ],
+      demographics: {
+        gender: [
+          { label:'Male', value: 58000 },
+          { label:'Female', value: 42000 }
+        ],
+        age: [
+          { label:'18-24', value: 20000 },
+          { label:'25-34', value: 26000 },
+          { label:'35-44', value: 18000 },
+          { label:'45-54', value: 12000 }
+        ]
+      },
       subscribed: [
         { label:'Subscribed', value: 72000 },
         { label:'Not Subscribed', value: 41000 }
@@ -1214,10 +1509,13 @@
     analytics.countryDetail = { code:null, name:'', cities:[] };
     analytics.topAllTime = agg.topVideos;
     analytics.mostWatchedRecent = agg.recent;
-    analytics.subscribedStatus = Array.isArray(agg.subscribedStatus) ? agg.subscribedStatus : [];
-    analytics.trafficSources = Array.isArray(agg.trafficSources) ? agg.trafficSources : [];
-    analytics.deviceTypes = Array.isArray(agg.deviceTypes) ? agg.deviceTypes : [];
-    analytics.playbackLocations = Array.isArray(agg.playbackLocations) ? agg.playbackLocations : [];
+    applyBreakdownData({
+      subscribedStatus: agg.subscribedStatus,
+      trafficSources: agg.trafficSources,
+      deviceTypes: agg.deviceTypes,
+      playbackLocations: agg.playbackLocations,
+      demographics: agg.demographics
+    });
     viewMode = analytics.countries.length ? 'GEO' : 'TOP';
   }
 
@@ -1282,7 +1580,8 @@
     printLine('  METRIC [VIEWS|WATCH|SUBS]    - Change metric (live modes)');
     printLine('  RANGE [7|28|90|365]          - Change time range (days)');
     printLine('  COUNTRY [ISO2]               - Geo drill-down (GEO mode)');
-    printLine('  MODE [GEO|TOP]               - Switch bottom panels (Geo vs Top Videos)');
+    printLine('  MODE [GEO|TOP|SOURCE|DEVICE|PLAYBACK|DEMO]');
+    printLine('                               - Switch data panels (Geo, Videos, or breakdowns)');
     printLine('');
   }
   function status(){
@@ -1325,8 +1624,9 @@
       }
       else if(cmd==='MODE'){
         const m=(parts[1]||'').toUpperCase();
-        if(m==='GEO' || m==='TOP'){ viewMode=m; drawAll(); }
-        else printLine('ERROR: MODE GEO|TOP');
+        const allowed = ['GEO','TOP','SOURCE','DEVICE','PLAYBACK','DEMO'];
+        if(allowed.includes(m)){ viewMode=m; drawAll(); }
+        else printLine('ERROR: MODE GEO|TOP|SOURCE|DEVICE|PLAYBACK|DEMO');
       }
       else { printLine('UNKNOWN COMMAND. TYPE HELP'); }
       printLine('');
@@ -1583,6 +1883,7 @@
     const trafficSources = rawTrafficSources.map(normalizeSource).filter(Boolean).sort((a,b)=>b.value-a.value);
     const deviceTypes = rawDeviceTypes.map(normalizeSource).filter(Boolean).sort((a,b)=>b.value-a.value);
     const playbackLocations = rawPlaybackLocations.map(normalizeSource).filter(Boolean).sort((a,b)=>b.value-a.value);
+    const demographics = safePayload.demographics || null;
 
     return {
       overview,
@@ -1595,9 +1896,158 @@
       trafficSources,
       deviceTypes,
       playbackLocations,
+      demographics,
       videoCount: determineVideoCount()
     };
   }
+  function applyExportJSON(payload){
+    const safePayload = payload && typeof payload === 'object' ? payload : {};
+    dataMode = 'LOCAL';
+    connectionStatus.textContent = 'LOCAL JSON';
+    channelTitle = safePayload?.channel?.title || null;
+    if(channelTitle){ document.title = `WOPR // ${channelTitle}`; }
+
+    analytics.overview = safePayload.overview && typeof safePayload.overview === 'object'
+      ? safePayload.overview
+      : null;
+
+    const normalizeTimeseriesRow = (row) => {
+      if(!row) return null;
+      if(Array.isArray(row)){
+        const date = (row[0]||'').toString().slice(0,10);
+        if(!date) return null;
+        const value = Number(row[1]) || 0;
+        return { date, value };
+      }
+      if(typeof row === 'object'){
+        const date = (row.date || row.day || row.startDate || row.endDate || '').toString().slice(0,10);
+        if(!date) return null;
+        const value = Number(row.value ?? row.views ?? row.metrics?.views ?? 0) || 0;
+        return { date, value };
+      }
+      return null;
+    };
+
+    const normalizeDetailedRow = (row) => {
+      if(!row || typeof row !== 'object') return null;
+      const date = (row.date || row.day || row.startDate || row.endDate || '').toString().slice(0,10);
+      if(!date) return null;
+      const views = Number(row.views ?? row.value ?? row.metrics?.views ?? 0) || 0;
+      const watchRaw = row.watchTimeHours ?? row.metrics?.watchTimeHours ?? row.watchTime ?? row.metrics?.watchTime;
+      const watchMinutes = row.watchTimeMinutes ?? row.metrics?.watchTimeMinutes ?? row.metrics?.estimatedMinutesWatched;
+      const watchTimeHours = Number(watchRaw ?? (watchMinutes ? watchMinutes/60 : 0)) || 0;
+      const subscribers = Number(row.subscribers ?? row.metrics?.subscribers ?? row.subscribersGained ?? row.metrics?.subscribersGained ?? 0) || 0;
+      return { date, views, watchTimeHours, subscribers };
+    };
+
+    analytics.timeseriesDetailed = Array.isArray(safePayload.timeseriesDetailed)
+      ? safePayload.timeseriesDetailed.map(normalizeDetailedRow).filter(Boolean)
+      : [];
+    analytics.timeseriesDetailed.sort((a,b)=>a.date.localeCompare(b.date));
+
+    let ts = [];
+    if(analytics.timeseriesDetailed.length){
+      ts = analytics.timeseriesDetailed.map(row=>({ date: row.date, value: Number(row.views ?? row.value ?? 0) || 0 }));
+    }
+    if(!ts.length && Array.isArray(safePayload.timeseries)){
+      ts = safePayload.timeseries.map(normalizeTimeseriesRow).filter(Boolean);
+    }
+    analytics.timeseries = Array.isArray(ts) ? ts : [];
+    analytics.timeseries.sort((a,b)=>a.date.localeCompare(b.date));
+
+    const geoCountriesRaw = Array.isArray(safePayload?.geo?.countries) ? safePayload.geo.countries : [];
+    analytics.countries = geoCountriesRaw
+      .map(c=>({
+        countryCode: String(c?.countryCode || c?.code || '').toUpperCase(),
+        countryName: humanLabel(c?.countryName || c?.name || c?.countryCode || c?.code || ''),
+        value: Number(c?.value ?? c?.views ?? c?.count ?? 0) || 0
+      }))
+      .filter(c=>c.countryCode)
+      .sort((a,b)=>b.value-a.value);
+
+    analytics.countryDetail = { code:null, name:'', cities:[] };
+
+    localGeoByCountry.clear();
+    const citiesByCode = safePayload?.geo?.cities && typeof safePayload.geo.cities === 'object'
+      ? safePayload.geo.cities
+      : {};
+    Object.keys(citiesByCode).forEach(code=>{
+      const list = Array.isArray(citiesByCode[code]) ? citiesByCode[code] : [];
+      const cities = list
+        .map(city=>({
+          city: humanLabel(city?.city || city?.name || ''),
+          value: Number(city?.value ?? city?.views ?? city?.count ?? 0) || 0
+        }))
+        .filter(city=>city.city)
+        .sort((a,b)=>b.value-a.value);
+      if(!cities.length) return;
+      const match = analytics.countries.find(c=>c.countryCode===code);
+      const name = match?.countryName || code;
+      localGeoByCountry.set(code, { name, cities });
+    });
+
+    analytics.topAllTime = Array.isArray(safePayload.topAllTime)
+      ? safePayload.topAllTime
+        .map(v=>{
+          const baseLabel = humanLabel(v?.title || v?.label || '(untitled)') || '(untitled)';
+          return {
+            label: baseLabel.slice(0,22) || '(untitled)',
+            value: Number(v?.viewsInRange ?? v?.viewsTotal ?? v?.views ?? v?.value ?? 0) || 0,
+            id: v?.videoId || v?.id || null
+          };
+        })
+        .filter(item=>item.label && (item.value || item.id))
+        .sort((a,b)=>b.value-a.value)
+      : [];
+
+    const recentRaw = safePayload.mostWatchedRecent && typeof safePayload.mostWatchedRecent === 'object'
+      ? safePayload.mostWatchedRecent
+      : null;
+    analytics.mostWatchedRecent = recentRaw ? {
+      title: humanLabel(recentRaw.title || recentRaw.videoTitle || ''),
+      videoId: recentRaw.videoId || recentRaw.id || null,
+      viewsInRange: Number(recentRaw.viewsInRange ?? recentRaw.views ?? 0) || 0,
+      likes: Number(recentRaw.likes ?? recentRaw.likeCount ?? 0) || 0,
+      viewsTotal: Number(recentRaw.viewsTotal ?? recentRaw.totalViews ?? recentRaw.views ?? 0) || 0
+    } : null;
+
+    applyBreakdownData({
+      subscribedStatus: safePayload.subscribedStatus,
+      trafficSources: safePayload.trafficSources,
+      deviceTypes: safePayload.deviceTypes,
+      playbackLocations: safePayload.playbackLocations,
+      demographics: safePayload.demographics
+    });
+
+    viewMode = analytics.countries.length ? 'GEO' : 'TOP';
+    drawAll();
+
+    const ov = analytics.overview;
+    if(ov){
+      const parts = [];
+      const views = ov.views ?? ov.totalViews ?? ov.viewCount;
+      if(views !== undefined) parts.push(`${formatMetricValue(views)} views`);
+      const watchTime = ov.watchTimeHours ?? ov.watchTime ?? (typeof ov.watchTimeMinutes === 'number' ? ov.watchTimeMinutes/60 : undefined);
+      if(watchTime !== undefined) parts.push(`${formatMetricValue(watchTime, 1)} h watch`);
+      const avgSeconds = ov.avgViewDurationSec ?? ov.avgViewDurationSeconds ?? (typeof ov.avgViewDuration === 'number' ? ov.avgViewDuration : undefined);
+      const avgText = typeof avgSeconds === 'number' && !Number.isNaN(avgSeconds)
+        ? formatDuration(avgSeconds)
+        : (typeof ov.avgViewDuration === 'string' ? ov.avgViewDuration : null);
+      if(avgText) parts.push(`AVD ${avgText}`);
+      const gained = Number.isFinite(Number(ov.subscribersGained)) ? Number(ov.subscribersGained)
+        : (Number.isFinite(Number(ov.newSubscribers)) ? Number(ov.newSubscribers) : null);
+      const lost = Number.isFinite(Number(ov.subscribersLost)) ? Number(ov.subscribersLost) : null;
+      if(gained !== null){
+        let text = `Subs +${formatMetricValue(gained)}`;
+        if(lost !== null) text += ` / -${formatMetricValue(lost)}`;
+        parts.push(text);
+      }
+      if(parts.length){
+        printLine(`OVERVIEW: ${parts.join(' · ')}`);
+      }
+    }
+  }
+
   function applyPublicJSON(payload, aggregated){
     dataMode = 'LOCAL';
     connectionStatus.textContent = 'LOCAL JSON';
@@ -1614,10 +2064,13 @@
     // In LOCAL mode, repurpose panels to Top/Recent if no geo data is present
     analytics.topAllTime = agg.topVideos;
     analytics.mostWatchedRecent = agg.recent;
-    analytics.subscribedStatus = Array.isArray(agg.subscribedStatus) ? agg.subscribedStatus : [];
-    analytics.trafficSources = Array.isArray(agg.trafficSources) ? agg.trafficSources : [];
-    analytics.deviceTypes = Array.isArray(agg.deviceTypes) ? agg.deviceTypes : [];
-    analytics.playbackLocations = Array.isArray(agg.playbackLocations) ? agg.playbackLocations : [];
+    applyBreakdownData({
+      subscribedStatus: agg.subscribedStatus,
+      trafficSources: agg.trafficSources,
+      deviceTypes: agg.deviceTypes,
+      playbackLocations: agg.playbackLocations,
+      demographics: agg.demographics
+    });
     viewMode = analytics.countries.length ? 'GEO' : 'TOP';
 
     drawAll();
@@ -1629,27 +2082,35 @@
     try{
       const text = await f.text();
       const payload = JSON.parse(text);
-      const hasNewRoots = payload && typeof payload === 'object' && (
-        (payload.channel && typeof payload.channel === 'object') ||
-        (payload.overview && typeof payload.overview === 'object') ||
-        Array.isArray(payload.timeseries) ||
-        Array.isArray(payload.timeseriesDetailed) ||
-        (payload.geo && (Array.isArray(payload.geo?.countries) || payload.geo?.cities)) ||
-        Array.isArray(payload.topAllTime) ||
-        Array.isArray(payload.subscribed) ||
-        Array.isArray(payload.discovery) ||
-        Array.isArray(payload.subscribedStatus) ||
-        Array.isArray(payload.trafficSources) ||
-        Array.isArray(payload.deviceTypes) ||
-        Array.isArray(payload.playbackLocations)
-      );
-      if(!Array.isArray(payload.uploads) && !hasNewRoots){
-        throw new Error('Invalid JSON: expected uploads[] or analytics fields');
+      const isExport = payload && typeof payload === 'object'
+        && payload.overview && payload.geo;
+      if(isExport){
+        applyExportJSON(payload);
+        const titleSuffix = payload?.channel?.title ? ` — ${payload.channel.title}` : '';
+        printLine(`IMPORTED EXPORT JSON${titleSuffix}`);
+      } else {
+        const hasNewRoots = payload && typeof payload === 'object' && (
+          (payload.channel && typeof payload.channel === 'object') ||
+          (payload.overview && typeof payload.overview === 'object') ||
+          Array.isArray(payload.timeseries) ||
+          Array.isArray(payload.timeseriesDetailed) ||
+          (payload.geo && (Array.isArray(payload.geo?.countries) || payload.geo?.cities)) ||
+          Array.isArray(payload.topAllTime) ||
+          Array.isArray(payload.subscribed) ||
+          Array.isArray(payload.discovery) ||
+          Array.isArray(payload.subscribedStatus) ||
+          Array.isArray(payload.trafficSources) ||
+          Array.isArray(payload.deviceTypes) ||
+          Array.isArray(payload.playbackLocations)
+        );
+        if(!Array.isArray(payload.uploads) && !hasNewRoots){
+          throw new Error('Invalid JSON: expected uploads[] or analytics fields');
+        }
+        const agg = applyPublicJSON(payload);
+        const count = agg?.videoCount || (Array.isArray(payload.uploads) ? payload.uploads.length : 0);
+        const label = count ? `${count} ${count===1?'VIDEO':'VIDEOS'}` : 'DATASET';
+        printLine(`IMPORTED ${label}${channelTitle? ' — '+channelTitle: ''}`);
       }
-      const agg = applyPublicJSON(payload);
-      const count = agg?.videoCount || (Array.isArray(payload.uploads) ? payload.uploads.length : 0);
-      const label = count ? `${count} ${count===1?'VIDEO':'VIDEOS'}` : 'DATASET';
-      printLine(`IMPORTED ${label}${channelTitle? ' — '+channelTitle: ''}`);
     }catch(err){
       printLine('ERROR: '+(err?.message||String(err)), 'error');
     }
