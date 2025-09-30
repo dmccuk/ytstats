@@ -75,7 +75,12 @@
 <body>
   <div id="header">
     <div>W.O.P.R // CHANNEL OPERATIONS</div>
-    <div>CONNECTION: <span id="connection-status">STANDBY</span></div>
+    <div style="display:flex;align-items:center;gap:12px">
+      CONNECTION: <span id="connection-status">STANDBY</span>
+      <label class="badge" for="json-input" style="cursor:pointer">IMPORT JSON</label>
+      <input id="json-input" type="file" accept="application/json" style="display:none" />
+    </div>
+
   </div>
 
   <div id="main-container">
@@ -142,6 +147,10 @@
   const connectionStatus = document.getElementById('connection-status');
   const trackCountDisplay = document.getElementById('track-count');
   const metricBadge = document.getElementById('metric-badge');
+  const jsonInput = document.getElementById('json-input');
+  const topBoxTitle = document.getElementById('top-box-title') || document.getElementById('top-countries-box')?.querySelector('.monitor-title');
+  const detailBoxTitle = document.getElementById('detail-box-title') || document.getElementById('country-detail-box')?.querySelector('.monitor-title');
+
 
   // canvases
   const worldCanvas = document.getElementById('world-canvas');
@@ -186,7 +195,9 @@
   // ==========
   let defconLevel = 5; let trackCount=0;
   let worldGeo = null; // GeoJSON of countries
-  let metric = 'views'; // views | watchTime | subscribers
+  let metric = 'views'; // views | watchTime | subscribers  (local JSON also supports likes|comments)
+  let publicJSONMode = false; // toggled when a local JSON file is imported
+  let channelTitle = null;
   let days = 28;
   let analytics = {
     overview:null,
@@ -340,32 +351,66 @@
   // Rendering entrypoints
   // ==========
   function drawAll(){
-    drawWorld(worldCtx, worldCanvas.clientWidth, worldCanvas.clientHeight);
-    if(analytics.overview){
-      const o = [
-        { k:'Views', v: analytics.overview.views },
-        { k:'Watch Hrs', v: analytics.overview.watchTimeHours },
-        { k:'Subs', v: analytics.overview.newSubscribers },
-        { k:'Revenue', v: analytics.overview.estRevenue }
+  drawWorld(worldCtx, worldCanvas.clientWidth, worldCanvas.clientHeight);
+
+  if(analytics.overview){
+    let o;
+    if(publicJSONMode){
+      o = [
+        { k:'Views',    v: analytics.overview.views||0 },
+        { k:'Likes',    v: analytics.overview.likes||0 },
+        { k:'Comments', v: analytics.overview.comments||0 },
+        { k:'Videos',   v: analytics.overview.videos||0 },
       ];
-      drawBars(overviewCtx, o, d=>d.k, d=>d.v);
-    } else { clearAndGrid(overviewCtx, overviewCanvas.clientWidth, overviewCanvas.clientHeight); }
+    } else {
+      o = [
+        { k:'Views',     v: analytics.overview.views },
+        { k:'Watch Hrs', v: analytics.overview.watchTimeHours },
+        { k:'Subs',      v: analytics.overview.newSubscribers },
+        { k:'Revenue',   v: analytics.overview.estRevenue }
+      ];
+    }
+    drawBars(overviewCtx, o, d=>d.k, d=>d.v);
+  } else {
+    clearAndGrid(overviewCtx, overviewCanvas.clientWidth, overviewCanvas.clientHeight);
+  }
 
-    if(analytics.countries?.length){
-      const top = analytics.countries.slice(0, 10);
+  if(analytics.countries?.length){
+    const top = analytics.countries.slice(0, 10);
+    if(publicJSONMode){
+      drawBars(countriesCtx, top, d=> (d.label||''), d=>d.value);
+    } else {
       drawBars(countriesCtx, top, d=>d.countryCode, d=>d.value);
-    } else { clearAndGrid(countriesCtx, countriesCanvas.clientWidth, countriesCanvas.clientHeight); }
+    }
+  } else {
+    clearAndGrid(countriesCtx, countriesCanvas.clientWidth, countriesCanvas.clientHeight);
+  }
 
-    if(analytics.countryDetail?.cities?.length){
-      const topC = analytics.countryDetail.cities.slice(0,10);
+  if(analytics.countryDetail?.cities?.length){
+    const topC = analytics.countryDetail.cities.slice(0,10);
+    if(publicJSONMode){
+      drawBars(countryCtx, topC, d=> (d.label||''), d=>d.value);
+    } else {
       drawBars(countryCtx, topC, d=>d.city, d=>d.value);
-    } else { clearAndGrid(countryCtx, countryCanvas.clientWidth, countryCanvas.clientHeight); }
+    }
+  } else {
+    clearAndGrid(countryCtx, countryCanvas.clientWidth, countryCanvas.clientHeight);
+  }
 
-    if(analytics.timeseries?.length){
-      drawLine(timeseriesCtx, analytics.timeseries);
-    } else { clearAndGrid(timeseriesCtx, timeseriesCanvas.clientWidth, timeseriesCanvas.clientHeight); }
+  if(analytics.timeseries?.length){
+    drawLine(timeseriesCtx, analytics.timeseries);
+  } else {
+    clearAndGrid(timeseriesCtx, timeseriesCanvas.clientWidth, timeseriesCanvas.clientHeight);
+  }
 
+  if(publicJSONMode){
+    metricBadge.textContent = (metric==='likes'?'Likes':metric==='comments'?'Comments':'Views');
+    if(topBoxTitle)   topBoxTitle.textContent   = 'TOP VIDEOS';
+    if(detailBoxTitle) detailBoxTitle.textContent = 'RECENT VIDEOS';
+  } else {
     metricBadge.textContent = (metric==='views'?'Views':metric==='watchTime'?'Watch Time':'Subscribers');
+    if(topBoxTitle)   topBoxTitle.textContent   = 'TOP COUNTRIES';
+    if(detailBoxTitle) detailBoxTitle.textContent = 'COUNTRY DETAIL';
   }
 
   // ==========
@@ -507,10 +552,21 @@
       else if(cmd==='STATUS') status();
       else if(cmd==='METRIC'){
         const m=(parts[1]||'').toUpperCase();
-        if(m==='VIEWS') metric='views'; else if(m==='WATCH') metric='watchTime'; else if(m==='SUBS') metric='subscribers'; else { printLine('ERROR: METRIC VIEWS|WATCH|SUBS'); return; }
-        metricBadge.textContent = (metric==='views'?'Views':metric==='watchTime'?'Watch Time':'Subscribers');
+        if(publicJSONMode){
+          if(m==='VIEWS') metric='views';
+          else if(m==='LIKES') metric='likes';
+          else if(m==='COMMENTS') metric='comments';
+          else { printLine('ERROR (LOCAL JSON): METRIC VIEWS|LIKES|COMMENTS'); return; }
+        } else {
+          if(m==='VIEWS') metric='views';
+          else if(m==='WATCH') metric='watchTime';
+          else if(m==='SUBS') metric='subscribers';
+          else { printLine('ERROR: METRIC VIEWS|WATCH|SUBS'); return; }
+        }
+        metricBadge.textContent = publicJSONMode ? (metric==='likes'?'Likes':metric==='comments'?'Comments':'Views') : (metric==='views'?'Views':metric==='watchTime'?'Watch Time':'Subscribers');
         loadAnalytics();
       }
+
       else if(cmd==='RANGE'){
         const d=parseInt(parts[1],10); if([7,28,90,365].includes(d)){ days=d; loadAnalytics(); } else printLine('ERROR: RANGE 7|28|90|365');
       }
@@ -556,6 +612,82 @@
   resizeAll();
   selfTest();
   loadAnalytics();
+
+    // =====================
+// Local JSON import (client-side only)
+// =====================
+function humanLabel(s){ return (s||'').replace(/\s+/g,' ').trim(); }
+
+function aggregateFromPublicJSON(payload){
+  const uploads = Array.isArray(payload.uploads)? payload.uploads : [];
+  const safe = uploads.map(u=>({
+    id: u.id,
+    title: humanLabel(u.title),
+    publishedAt: u.publishedAt,
+    stats: {
+      views: Number(u.statistics?.viewCount||0),
+      likes: Number(u.statistics?.likeCount||0),
+      comments: Number(u.statistics?.commentCount||0)
+    }
+  }));
+
+  const overview = safe.reduce((acc,u)=>{
+    acc.views += u.stats.views; acc.likes += u.stats.likes; acc.comments += u.stats.comments; acc.videos += 1; return acc;
+  }, { views:0, likes:0, comments:0, videos:0 });
+
+  const metricKey = (metric==='likes'?'likes':metric==='comments'?'comments':'views');
+
+  const topVideos = [...safe]
+    .sort((a,b)=>b.stats[metricKey]-a.stats[metricKey])
+    .slice(0,50)
+    .map(v=>({ label: v.title.slice(0,22), value: v.stats[metricKey], id: v.id }));
+
+  const recent = [...safe]
+    .sort((a,b)=> new Date(b.publishedAt)-new Date(a.publishedAt))
+    .slice(0,50)
+    .map(v=>({ label: v.title.slice(0,22), value: v.stats[metricKey], id: v.id }));
+
+  const byDay = new Map();
+  safe.forEach(v=>{
+    const day=(v.publishedAt||'').slice(0,10);
+    if(!day) return;
+    byDay.set(day, (byDay.get(day)||0) + (v.stats[metricKey]||0));
+  });
+  const ts = [...byDay.keys()].sort().map(d=>({ date:d, value: byDay.get(d) }));
+
+  return { overview, topVideos, recent, ts };
+}
+
+function applyPublicJSON(payload){
+  publicJSONMode = true;
+  channelTitle = payload?.channel?.title || null;
+  if(channelTitle){ document.title = `WOPR // ${channelTitle}`; }
+
+  const agg = aggregateFromPublicJSON(payload);
+  analytics.overview = agg.overview;
+  analytics.countries = agg.topVideos;                            // reuse “countries” panel for Top Videos
+  analytics.countryDetail = { code:null, name:'', cities: agg.recent }; // reuse “country detail” panel for Recent
+  analytics.timeseries = agg.ts;
+
+  connectionStatus.textContent = 'LOCAL JSON';
+  metricBadge.textContent = (metric==='likes'?'Likes':metric==='comments'?'Comments':'Views');
+  if(topBoxTitle) topBoxTitle.textContent = 'TOP VIDEOS';
+  if(detailBoxTitle) detailBoxTitle.textContent = 'RECENT VIDEOS';
+  drawAll();
+}
+
+jsonInput?.addEventListener('change', async (e)=>{
+  const f = e.target.files?.[0]; if(!f) return;
+  try{
+    const text = await f.text();
+    const payload = JSON.parse(text);
+    if(!payload || !Array.isArray(payload.uploads)) throw new Error('Invalid JSON: missing uploads[]');
+    applyPublicJSON(payload);
+    printLine(`IMPORTED ${payload.uploads.length} VIDEOS${channelTitle? ' — '+channelTitle: ''}`);
+  }catch(err){
+    printLine('ERROR: '+(err?.message||String(err)), 'error');
+  }
+});
 
   // =====================
   // Backend server stub (Node/Express + googleapis) — put in server.js
