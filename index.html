@@ -51,10 +51,10 @@
 
     /* Right visuals grid (world map ~2/3 width) */
     #right { position:absolute; inset:0; padding: 10px; background: rgba(5, 15, 5, 0.5); display:grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); grid-auto-rows: 1fr; gap: 10px; align-items:stretch; }
-    #top-row, #bottom-row { display:flex; flex-direction:column; gap:10px; min-height:0; }
-    #top-row { grid-column: 1; }
-    #bottom-row { grid-column: 2; }
-    #top-row .monitor-box, #bottom-row .monitor-box { flex:1; min-height:0; }
+    #top-row { display:flex; flex-direction:column; gap:10px; min-height:0; grid-column: 1; }
+    #bottom-row { grid-column: 2; display:grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); grid-auto-rows: minmax(180px, 1fr); gap:10px; align-content:start; overflow:auto; padding-right:2px; }
+    #top-row .monitor-box, #bottom-row .monitor-box { min-height:0; }
+    .monitor-box.wide { grid-column: span 2; }
 
     .monitor-box { border: 1px solid var(--phosphor); background: #000; position: relative; box-shadow: inset 0 0 18px rgba(51,255,51,0.08); overflow:hidden; display:flex; flex-direction:column; min-height:0; }
     .monitor-title { position: absolute; top: 5px; left: 10px; font-size: 13px; text-shadow: 0 0 6px var(--phosphor); z-index: 10; }
@@ -70,6 +70,11 @@
     .monitor-list .label { flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
     .monitor-list .value { text-align:right; font-variant-numeric: tabular-nums; }
     .monitor-list .empty { justify-content:center; border-bottom:none; opacity:0.65; }
+    .monitor-list.compact { font-size:12px; }
+    .monitor-list.compact .rank { min-width:20px; }
+    .monitor-list.metrics li { flex-direction:column; align-items:flex-start; }
+    .monitor-list.metrics .row-head { display:flex; width:100%; justify-content:space-between; align-items:center; gap:8px; }
+    .monitor-list.metrics .meta { display:flex; flex-wrap:wrap; gap:8px; font-size:12px; opacity:0.8; }
 
     /* City drill modal */
     #city-popup[hidden] { display: none; }
@@ -174,7 +179,7 @@
         </div>
       </div>
       <div id="bottom-row">
-        <div id="top-countries-box" class="monitor-box">
+        <div id="top-countries-box" class="monitor-box wide">
           <div class="monitor-title" id="top-box-title">TOP COUNTRIES</div>
           <div class="scan-line"></div>
           <ol id="top-list" class="monitor-list" aria-live="polite"></ol>
@@ -184,10 +189,35 @@
           <div class="scan-line"></div>
           <canvas id="country-canvas"></canvas>
         </div>
-        <div id="timeseries-box" class="monitor-box">
+        <div id="timeseries-box" class="monitor-box wide">
           <div class="monitor-title" id="ts-title">TIME SERIES</div>
           <div class="scan-line"></div>
           <canvas id="timeseries-canvas"></canvas>
+        </div>
+        <div id="subscribed-box" class="monitor-box">
+          <div class="monitor-title" id="subscribed-title">SUBSCRIBER STATUS</div>
+          <div class="scan-line"></div>
+          <canvas id="subscribed-canvas"></canvas>
+        </div>
+        <div id="traffic-box" class="monitor-box">
+          <div class="monitor-title" id="traffic-title">TRAFFIC SOURCES</div>
+          <div class="scan-line"></div>
+          <ol id="traffic-list" class="monitor-list compact" aria-live="polite"></ol>
+        </div>
+        <div id="devices-box" class="monitor-box">
+          <div class="monitor-title" id="devices-title">DEVICE TYPES</div>
+          <div class="scan-line"></div>
+          <canvas id="devices-canvas"></canvas>
+        </div>
+        <div id="playback-box" class="monitor-box">
+          <div class="monitor-title" id="playback-title">PLAYBACK LOCATIONS</div>
+          <div class="scan-line"></div>
+          <ol id="playback-list" class="monitor-list compact" aria-live="polite"></ol>
+        </div>
+        <div id="timeseries-detailed-box" class="monitor-box wide">
+          <div class="monitor-title" id="ts-detailed-title">DAILY DETAIL</div>
+          <div class="scan-line"></div>
+          <ol id="timeseries-detailed-list" class="monitor-list metrics" aria-live="polite"></ol>
         </div>
       </div>
     </section>
@@ -235,17 +265,30 @@
   const topBoxTitle = document.getElementById('top-box-title');
   const detailBoxTitle = document.getElementById('detail-box-title');
   const worldTitle = document.getElementById('world-title');
+  const tsTitle = document.getElementById('ts-title');
   const topList = document.getElementById('top-list');
+  const subscribedTitle = document.getElementById('subscribed-title');
+  const trafficTitle = document.getElementById('traffic-title');
+  const devicesTitle = document.getElementById('devices-title');
+  const playbackTitle = document.getElementById('playback-title');
+  const tsDetailedTitle = document.getElementById('ts-detailed-title');
+  const trafficList = document.getElementById('traffic-list');
+  const playbackList = document.getElementById('playback-list');
+  const tsDetailedList = document.getElementById('timeseries-detailed-list');
 
   // canvases
   const worldCanvas = document.getElementById('world-canvas');
   const countryCanvas = document.getElementById('country-canvas');
   const timeseriesCanvas = document.getElementById('timeseries-canvas');
+  const subscribedCanvas = document.getElementById('subscribed-canvas');
+  const devicesCanvas = document.getElementById('devices-canvas');
 
   const worldCtx = worldCanvas.getContext('2d');
   const countryCtx = countryCanvas.getContext('2d');
   const timeseriesCtx = timeseriesCanvas.getContext('2d');
   const cityPopupCtx = cityPopupCanvas.getContext('2d');
+  const subscribedCtx = subscribedCanvas ? subscribedCanvas.getContext('2d') : null;
+  const devicesCtx = devicesCanvas ? devicesCanvas.getContext('2d') : null;
 
   // Tip for world map hover
   const tipWorld = document.getElementById('tip-world');
@@ -278,7 +321,7 @@
     canvas.addEventListener('mouseleave', ()=>{ tipBars.style.display='none'; });
   }
 
-  [countryCanvas, cityPopupCanvas].forEach(attachBarTooltip);
+  [countryCanvas, cityPopupCanvas, subscribedCanvas, devicesCanvas].forEach(attachBarTooltip);
 
   let cityPopupLastFocus = null;
   let cityPopupDetail = null;
@@ -450,6 +493,7 @@
 
   // DPR-aware sizing
   function fitCanvas(c, ctx){
+    if(!c || !ctx) return;
     const dpr = window.devicePixelRatio || 1;
     const cw = c.clientWidth || c.parentElement.clientWidth;
     const ch = c.clientHeight || c.parentElement.clientHeight;
@@ -464,6 +508,8 @@
     fitCanvas(worldCanvas, worldCtx);
     fitCanvas(countryCanvas, countryCtx);
     fitCanvas(timeseriesCanvas, timeseriesCtx);
+    fitCanvas(subscribedCanvas, subscribedCtx);
+    fitCanvas(devicesCanvas, devicesCtx);
     if(!cityPopup?.hasAttribute('hidden')){
       fitCanvas(cityPopupCanvas, cityPopupCtx);
     }
@@ -491,15 +537,24 @@
 
   let channelTitle = null;
 
+  const METRIC_DETAILS = {
+    views: { key: 'views', label: 'Views', decimals: 0 },
+    watchTime: { key: 'watchTimeHours', label: 'Watch Time (hrs)', decimals: 1 },
+    subscribers: { key: 'subscribers', label: 'Subscribers', decimals: 0 }
+  };
+
   const analytics = {
     overview:null,
     countries:[],                 // GEO: [{countryCode, countryName, value}]  | TOP mode: [{label,value,id}]
     countryDetail:{ code:null, name:'', cities:[] }, // GEO cities | TOP recent videos
     timeseries:[],
+    timeseriesDetailed:[],
     topAllTime:[],                // prepared rows for TOP mode
     mostWatchedRecent: null,      // {title, videoId, viewsInRange, likes, viewsTotal}
-    subscribedSources:[],         // Local JSON extras (traffic sources)
-    discoverySources:[]
+    subscribedStatus:[],
+    trafficSources:[],
+    deviceTypes:[],
+    playbackLocations:[]
   };
 
   const localGeoByCountry = new Map();
@@ -658,6 +713,119 @@
     ctx.restore();
   }
 
+  function metricDetailFor(metric){
+    return METRIC_DETAILS[metric] || METRIC_DETAILS.views;
+  }
+
+  function formatMetricValue(value, decimals=0){
+    const num = Number(value)||0;
+    if(decimals>0){
+      return num.toLocaleString(undefined, { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
+    }
+    return num.toLocaleString();
+  }
+
+  function renderGenericList(listEl, items, options={}){
+    if(!listEl) return;
+    listEl.innerHTML = '';
+    if(typeof listEl.scrollTop === 'number'){ listEl.scrollTop = 0; }
+    const data = Array.isArray(items) ? items.slice(0, options.limit || items.length) : [];
+    if(!data.length){
+      const empty = document.createElement('li');
+      empty.className = 'empty';
+      empty.textContent = 'NO DATA';
+      listEl.appendChild(empty);
+      return;
+    }
+    const showRank = options.showRank !== false;
+    const labelAccessor = typeof options.labelAccessor === 'function'
+      ? options.labelAccessor
+      : (item)=> item?.label ?? '';
+    const valueAccessor = typeof options.valueAccessor === 'function'
+      ? options.valueAccessor
+      : (item)=> item?.value ?? 0;
+    const valueFormatter = typeof options.valueFormatter === 'function'
+      ? options.valueFormatter
+      : (value)=> formatMetricValue(value, options.decimals || 0);
+    const frag = document.createDocumentFragment();
+    data.forEach((item, index)=>{
+      const li = document.createElement('li');
+      if(showRank){
+        const rank = document.createElement('span');
+        rank.className = 'rank';
+        rank.textContent = String(index+1).padStart(2,'0');
+        li.appendChild(rank);
+      }
+      const label = document.createElement('span');
+      label.className = 'label';
+      label.textContent = labelAccessor(item, index) || '(unknown)';
+      const valueSpan = document.createElement('span');
+      valueSpan.className = 'value';
+      const rawValue = valueAccessor(item, index);
+      valueSpan.textContent = valueFormatter(rawValue, item, index);
+      li.append(label, valueSpan);
+      frag.appendChild(li);
+    });
+    listEl.appendChild(frag);
+  }
+
+  function renderTimeseriesDetailedList(listEl, metric){
+    if(!listEl) return;
+    listEl.innerHTML = '';
+    const data = Array.isArray(analytics.timeseriesDetailed) ? analytics.timeseriesDetailed.slice() : [];
+    if(!data.length){
+      const empty = document.createElement('li');
+      empty.className = 'empty';
+      empty.textContent = 'NO DATA';
+      listEl.appendChild(empty);
+      return;
+    }
+    data.sort((a,b)=> (b?.date||'').localeCompare(a?.date||''));
+    const detail = metricDetailFor(metric);
+    const limit = Math.min(data.length, 7);
+    const metaConfig = [
+      { key: 'views', label: 'Views', decimals: 0 },
+      { key: 'watchTimeHours', label: 'Watch Hrs', decimals: 1 },
+      { key: 'subscribers', label: 'Subs', decimals: 0 }
+    ];
+    for(let i=0;i<limit;i++){
+      const entry = data[i] || {};
+      const li = document.createElement('li');
+      const head = document.createElement('div');
+      head.className = 'row-head';
+      const label = document.createElement('span');
+      label.className = 'label';
+      label.textContent = entry.date || `DAY ${i+1}`;
+      const value = document.createElement('span');
+      value.className = 'value';
+      value.textContent = formatMetricValue(entry?.[detail.key], detail.decimals);
+      head.append(label, value);
+      li.appendChild(head);
+      const meta = document.createElement('div');
+      meta.className = 'meta';
+      metaConfig.forEach(cfg=>{
+        if(cfg.key === detail.key) return;
+        const span = document.createElement('span');
+        span.textContent = `${cfg.label}: ${formatMetricValue(entry?.[cfg.key], cfg.decimals)}`;
+        meta.appendChild(span);
+      });
+      if(meta.childNodes.length){
+        li.appendChild(meta);
+      }
+      listEl.appendChild(li);
+    }
+  }
+
+  function buildTimeseriesForMetric(metric){
+    const detail = metricDetailFor(metric);
+    if(Array.isArray(analytics.timeseriesDetailed) && analytics.timeseriesDetailed.length){
+      return analytics.timeseriesDetailed
+        .map(row=>({ date: row?.date || '', value: Number(row?.[detail.key]) || 0 }))
+        .filter(point=>point.date);
+    }
+    return Array.isArray(analytics.timeseries) ? analytics.timeseries : [];
+  }
+
   function renderTopList(items, mode){
     if(!topList) return;
     topList.innerHTML='';
@@ -718,6 +886,8 @@
   // Rendering entrypoints
   // ==========
   function drawAll(){
+    const metricInfo = metricDetailFor(metric);
+
     // Titles depend on view mode
     if(viewMode==='GEO'){
       topBoxTitle.textContent = `TOP COUNTRIES (${days}D)`;
@@ -733,6 +903,25 @@
       topBoxTitle.textContent = 'TOP 5 VIDEOS (ALL-TIME)';
       detailBoxTitle.textContent = 'MOST WATCHED (RECENT)';
       worldTitle.textContent = 'GLOBAL THEATER';
+    }
+
+    if(tsTitle){
+      tsTitle.textContent = `TIME SERIES // ${metricInfo.label}`;
+    }
+    if(subscribedTitle){
+      subscribedTitle.textContent = `SUBSCRIBER STATUS (${days}D)`;
+    }
+    if(trafficTitle){
+      trafficTitle.textContent = `TRAFFIC SOURCES (${days}D)`;
+    }
+    if(devicesTitle){
+      devicesTitle.textContent = `DEVICE TYPES (${days}D)`;
+    }
+    if(playbackTitle){
+      playbackTitle.textContent = `PLAYBACK LOCATIONS (${days}D)`;
+    }
+    if(tsDetailedTitle){
+      tsDetailedTitle.textContent = `DAILY DETAIL (${metricInfo.label})`;
     }
 
     drawWorld(worldCtx, worldCanvas.clientWidth, worldCanvas.clientHeight);
@@ -760,11 +949,18 @@
     }
 
     // Bottom-right panel
-    if(analytics.timeseries?.length) drawLine(timeseriesCtx, analytics.timeseries);
+    const timeseriesData = buildTimeseriesForMetric(metric);
+    if(timeseriesData.length) drawLine(timeseriesCtx, timeseriesData);
     else clearAndGrid(timeseriesCtx, timeseriesCanvas.clientWidth, timeseriesCanvas.clientHeight);
 
+    if(subscribedCtx) drawBars(subscribedCtx, Array.isArray(analytics.subscribedStatus) ? analytics.subscribedStatus.slice(0,8) : [], d=>d.label, d=>d.value);
+    if(devicesCtx) drawBars(devicesCtx, Array.isArray(analytics.deviceTypes) ? analytics.deviceTypes.slice(0,8) : [], d=>d.label, d=>d.value);
+    renderGenericList(trafficList, analytics.trafficSources, { limit: 8 });
+    renderGenericList(playbackList, analytics.playbackLocations, { limit: 8 });
+    renderTimeseriesDetailedList(tsDetailedList, metric);
+
     // Badge
-    metricBadge.textContent = (metric==='views'?'Views':metric==='watchTime'?'Watch Time':'Subscribers');
+    metricBadge.textContent = metricInfo.label;
   }
 
   // ==========
@@ -800,16 +996,47 @@
     try{
       dataMode = 'LIVE';
       connectionStatus.textContent = 'LIVE DATA';
-      const [ov, cs, ts] = await Promise.all([
+      const normalizePairs = (arr) => Array.isArray(arr)
+        ? arr.map(item=>({
+            label: String(item?.label || item?.name || item?.title || '').trim(),
+            value: Number(item?.value ?? item?.views ?? item?.count ?? 0)
+          }))
+          .filter(item=>item.label && !Number.isNaN(item.value))
+          .sort((a,b)=>b.value-a.value)
+        : [];
+
+      const normalizeDetailedRow = (row) => {
+        if(!row || typeof row !== 'object') return null;
+        const date = (row.date || row.day || row.startDate || '').toString().slice(0,10);
+        if(!date) return null;
+        const views = Number(row.views ?? row.value ?? row.metrics?.views ?? 0) || 0;
+        const watchRaw = row.watchTimeHours ?? row.metrics?.watchTimeHours ?? row.watchTime ?? row.metrics?.watchTime;
+        const watchMinutes = row.watchTimeMinutes ?? row.metrics?.watchTimeMinutes ?? row.metrics?.estimatedMinutesWatched;
+        const watchTimeHours = Number(watchRaw ?? (watchMinutes ? watchMinutes/60 : 0)) || 0;
+        const subscribers = Number(row.subscribers ?? row.metrics?.subscribers ?? row.subscribersGained ?? row.metrics?.subscribersGained ?? 0) || 0;
+        return { date, views, watchTimeHours, subscribers };
+      };
+
+      const [ov, cs, ts, tsDetailed, subscribedStatus, trafficSources, deviceTypes, playbackLocations] = await Promise.all([
         fetchJSON(`/api/yta/overview?days=${days}`),
         fetchJSON(`/api/yta/countries?metric=${metric}&days=${days}`),
-        fetchJSON(`/api/yta/timeseries?metric=${metric}&days=${days}`)
+        fetchJSON(`/api/yta/timeseries?metric=${metric}&days=${days}`),
+        fetchJSON(`/api/yta/timeseries-detailed?days=${days}`).catch(()=>null),
+        fetchJSON(`/api/yta/subscribed-status?days=${days}`).catch(()=>[]),
+        fetchJSON(`/api/yta/traffic-sources?days=${days}`).catch(()=>[]),
+        fetchJSON(`/api/yta/device-types?days=${days}`).catch(()=>[]),
+        fetchJSON(`/api/yta/playback-locations?days=${days}`).catch(()=>[])
       ]);
       analytics.overview = ov;
-      analytics.countries = cs.sort((a,b)=>b.value-a.value);
-      analytics.timeseries = ts;
-      analytics.subscribedSources = [];
-      analytics.discoverySources = [];
+      analytics.countries = Array.isArray(cs) ? cs.slice().sort((a,b)=>Number(b.value||0)-Number(a.value||0)) : [];
+      analytics.timeseries = Array.isArray(ts) ? ts : [];
+      analytics.timeseriesDetailed = Array.isArray(tsDetailed)
+        ? tsDetailed.map(normalizeDetailedRow).filter(Boolean)
+        : [];
+      analytics.subscribedStatus = normalizePairs(subscribedStatus);
+      analytics.trafficSources = normalizePairs(trafficSources);
+      analytics.deviceTypes = normalizePairs(deviceTypes);
+      analytics.playbackLocations = normalizePairs(playbackLocations);
 
       // Load top videos extras (likes are total in backend)
       await loadTopAllTime();
@@ -942,10 +1169,29 @@
       geo: { countries: geoCountries, cities: geoCities },
       topAllTime: topAllTimeRaw,
       mostWatchedRecent,
+      subscribedStatus: [
+        { label:'Subscribed', value: 72000 },
+        { label:'Not Subscribed', value: 41000 }
+      ],
+      trafficSources: [
+        { label:'Browse Features', value: 45000 },
+        { label:'Suggested Videos', value: 38000 },
+        { label:'YouTube Search', value: 25000 }
+      ],
+      deviceTypes: [
+        { label:'Mobile', value: 72000 },
+        { label:'Desktop', value: 38000 },
+        { label:'Tablet', value: 12000 },
+        { label:'TV', value: 8000 }
+      ],
+      playbackLocations: [
+        { label:'YouTube Watch Page', value: 64000 },
+        { label:'Channel Page', value: 19000 },
+        { label:'External', value: 9500 }
+      ],
       subscribed: [
-        { label:'Subscribers', value: 72000 },
-        { label:'Notifications', value: 18000 },
-        { label:'Channel Page', value: 12000 }
+        { label:'Subscribed', value: 72000 },
+        { label:'Not Subscribed', value: 41000 }
       ],
       discovery: [
         { label:'Browse Features', value: 45000 },
@@ -963,12 +1209,15 @@
 
     analytics.overview = agg.overview;
     analytics.timeseries = agg.ts;
+    analytics.timeseriesDetailed = Array.isArray(agg.timeseriesDetailed) ? agg.timeseriesDetailed : [];
     analytics.countries = agg.countries || [];
     analytics.countryDetail = { code:null, name:'', cities:[] };
     analytics.topAllTime = agg.topVideos;
     analytics.mostWatchedRecent = agg.recent;
-    analytics.subscribedSources = Array.isArray(agg.subscribed) ? agg.subscribed : [];
-    analytics.discoverySources = Array.isArray(agg.discovery) ? agg.discovery : [];
+    analytics.subscribedStatus = Array.isArray(agg.subscribedStatus) ? agg.subscribedStatus : [];
+    analytics.trafficSources = Array.isArray(agg.trafficSources) ? agg.trafficSources : [];
+    analytics.deviceTypes = Array.isArray(agg.deviceTypes) ? agg.deviceTypes : [];
+    analytics.playbackLocations = Array.isArray(agg.playbackLocations) ? agg.playbackLocations : [];
     viewMode = analytics.countries.length ? 'GEO' : 'TOP';
   }
 
@@ -1059,8 +1308,8 @@
       else if(cmd==='METRIC'){
         const m=(parts[1]||'').toUpperCase();
         if(m==='VIEWS') metric='views'; else if(m==='WATCH') metric='watchTime'; else if(m==='SUBS') metric='subscribers'; else { printLine('ERROR: METRIC VIEWS|WATCH|SUBS'); return; }
-        metricBadge.textContent = (metric==='views'?'Views':metric==='watchTime'?'Watch Time':'Subscribers');
-        if(dataMode==='LIVE') loadAnalytics();
+        metricBadge.textContent = metricDetailFor(metric).label;
+        if(dataMode==='LIVE') loadAnalytics(); else drawAll();
       }
       else if(cmd==='RANGE'){
         const d=parseInt(parts[1],10); if([7,28,90,365].includes(d)){ days=d; if(dataMode==='LIVE') loadAnalytics(); drawAll(); } else printLine('ERROR: RANGE 7|28|90|365');
@@ -1129,8 +1378,16 @@
     const rawMostWatched = safePayload.mostWatchedRecent && typeof safePayload.mostWatchedRecent === 'object'
       ? safePayload.mostWatchedRecent
       : null;
-    const rawSubscribed = Array.isArray(safePayload.subscribed) ? safePayload.subscribed : [];
-    const rawDiscovery = Array.isArray(safePayload.discovery) ? safePayload.discovery : [];
+    const rawSubscribedLegacy = Array.isArray(safePayload.subscribed) ? safePayload.subscribed : [];
+    const rawSubscribedStatus = Array.isArray(safePayload.subscribedStatus) ? safePayload.subscribedStatus : rawSubscribedLegacy;
+    const rawDiscoveryLegacy = Array.isArray(safePayload.discovery) ? safePayload.discovery : [];
+    const rawTrafficSources = Array.isArray(safePayload.trafficSources) ? safePayload.trafficSources : rawDiscoveryLegacy;
+    const rawDeviceTypes = Array.isArray(safePayload.deviceTypes)
+      ? safePayload.deviceTypes
+      : (Array.isArray(safePayload.devices) ? safePayload.devices : []);
+    const rawPlaybackLocations = Array.isArray(safePayload.playbackLocations)
+      ? safePayload.playbackLocations
+      : (Array.isArray(safePayload.locations) ? safePayload.locations : []);
 
     localGeoByCountry.clear();
 
@@ -1211,16 +1468,39 @@
     const rawTimeseriesDetailed = Array.isArray(safePayload.timeseriesDetailed) ? safePayload.timeseriesDetailed : [];
     const rawTimeseries = Array.isArray(safePayload.timeseries) ? safePayload.timeseries : [];
 
+    const timeseriesDetailed = rawTimeseriesDetailed
+      .map((row)=>{
+        if(!row || typeof row !== 'object') return null;
+        const date = (row.date || row.day || row.startDate || row.endDate || '').toString().slice(0,10);
+        if(!date) return null;
+        const views = firstNumber(row.views, row.value, row.metrics?.views);
+        const watchMinutesRaw = firstNumber(
+          row.watchTimeMinutes,
+          row.metrics?.watchTimeMinutes,
+          row.metrics?.estimatedMinutesWatched
+        );
+        const watchTimeHours = firstNumber(
+          row.watchTimeHours,
+          row.watchTime,
+          row.metrics?.watchTimeHours,
+          row.metrics?.watchTime,
+          typeof watchMinutesRaw === 'number' ? watchMinutesRaw/60 : undefined
+        );
+        const subscribers = firstNumber(
+          row.subscribers,
+          row.subscribersGained,
+          row.netSubscribers,
+          row.metrics?.subscribers,
+          row.metrics?.subscribersGained
+        );
+        return { date, views, watchTimeHours, subscribers };
+      })
+      .filter(Boolean)
+      .sort((a,b)=>a.date.localeCompare(b.date));
+
     let ts = [];
-    if(rawTimeseriesDetailed.length){
-      ts = rawTimeseriesDetailed.map((row)=>{
-        if(row && typeof row === 'object'){
-          const date = (row.date || row.day || '').toString().slice(0,10);
-          const value = firstNumber(row.views, row.value, row.metrics?.views);
-          if(date) return { date, value };
-        }
-        return normalizeTimeseriesRow(row);
-      }).filter(Boolean);
+    if(timeseriesDetailed.length){
+      ts = timeseriesDetailed.map(row=>({ date: row.date, value: row.views }));
     }
     if(!ts.length && rawTimeseries.length){
       ts = rawTimeseries.map(normalizeTimeseriesRow).filter(Boolean);
@@ -1293,23 +1573,28 @@
     } : null;
 
     const normalizeSource = (entry) => {
-      const label = humanLabel(entry?.label || entry?.title || entry?.name || '');
+      const label = humanLabel(entry?.label || entry?.title || entry?.name || entry?.source || entry?.deviceType || entry?.device || entry?.location || '');
       const value = firstNumber(entry?.value, entry?.views, entry?.count);
       if(!label) return null;
       return { label, value };
     };
 
-    const subscribed = rawSubscribed.map(normalizeSource).filter(Boolean);
-    const discovery = rawDiscovery.map(normalizeSource).filter(Boolean);
+    const subscribedStatus = rawSubscribedStatus.map(normalizeSource).filter(Boolean).sort((a,b)=>b.value-a.value);
+    const trafficSources = rawTrafficSources.map(normalizeSource).filter(Boolean).sort((a,b)=>b.value-a.value);
+    const deviceTypes = rawDeviceTypes.map(normalizeSource).filter(Boolean).sort((a,b)=>b.value-a.value);
+    const playbackLocations = rawPlaybackLocations.map(normalizeSource).filter(Boolean).sort((a,b)=>b.value-a.value);
 
     return {
       overview,
       topVideos,
       recent,
       ts,
+      timeseriesDetailed,
       countries,
-      subscribed,
-      discovery,
+      subscribedStatus,
+      trafficSources,
+      deviceTypes,
+      playbackLocations,
       videoCount: determineVideoCount()
     };
   }
@@ -1322,14 +1607,17 @@
     const agg = aggregated || aggregateFromPublicJSON(payload);
     analytics.overview = agg.overview;
     analytics.timeseries = agg.ts;
+    analytics.timeseriesDetailed = Array.isArray(agg.timeseriesDetailed) ? agg.timeseriesDetailed : [];
     analytics.countries = agg.countries || [];
     analytics.countryDetail = { code:null, name:'', cities:[] };
 
     // In LOCAL mode, repurpose panels to Top/Recent if no geo data is present
     analytics.topAllTime = agg.topVideos;
     analytics.mostWatchedRecent = agg.recent;
-    analytics.subscribedSources = Array.isArray(agg.subscribed) ? agg.subscribed : [];
-    analytics.discoverySources = Array.isArray(agg.discovery) ? agg.discovery : [];
+    analytics.subscribedStatus = Array.isArray(agg.subscribedStatus) ? agg.subscribedStatus : [];
+    analytics.trafficSources = Array.isArray(agg.trafficSources) ? agg.trafficSources : [];
+    analytics.deviceTypes = Array.isArray(agg.deviceTypes) ? agg.deviceTypes : [];
+    analytics.playbackLocations = Array.isArray(agg.playbackLocations) ? agg.playbackLocations : [];
     viewMode = analytics.countries.length ? 'GEO' : 'TOP';
 
     drawAll();
@@ -1349,7 +1637,11 @@
         (payload.geo && (Array.isArray(payload.geo?.countries) || payload.geo?.cities)) ||
         Array.isArray(payload.topAllTime) ||
         Array.isArray(payload.subscribed) ||
-        Array.isArray(payload.discovery)
+        Array.isArray(payload.discovery) ||
+        Array.isArray(payload.subscribedStatus) ||
+        Array.isArray(payload.trafficSources) ||
+        Array.isArray(payload.deviceTypes) ||
+        Array.isArray(payload.playbackLocations)
       );
       if(!Array.isArray(payload.uploads) && !hasNewRoots){
         throw new Error('Invalid JSON: expected uploads[] or analytics fields');
