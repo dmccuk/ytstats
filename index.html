@@ -42,7 +42,8 @@
     #main-container { position: absolute; top: 50px; bottom: 50px; left: 0; right: 0; display: block; }
 
     /* Compact terminal bottom-left */
-    #terminal-section { position:absolute; left:10px; bottom:10px; width:28vw; height:28vh; border: 1px solid var(--phosphor); display:flex; flex-direction:column; background: rgba(5,15,5,0.85); box-shadow: inset 0 0 24px rgba(51,255,51,0.08); overflow:hidden; z-index:200; }
+    #terminal-section { position:fixed; left:10px; bottom:10px; width:28vw; height:28vh; border: 1px solid var(--phosphor); display:flex; flex-direction:column; background: rgba(5,15,5,0.85); box-shadow: inset 0 0 24px rgba(51,255,51,0.08); overflow:hidden; z-index:200; }
+    #term-handle { padding: 6px 10px; border-bottom: 1px solid var(--phosphor); background: rgba(0, 20, 0, 0.85); font-size: 12px; letter-spacing: 2px; cursor: move; user-select: none; text-shadow: 0 0 6px var(--phosphor); }
     #terminal-output { flex: 1; overflow-y: auto; padding: 10px; letter-spacing: 1px; font-size: 12px; }
     #input-line { padding: 6px 10px; border-top: 1px solid var(--phosphor); display:flex; align-items:center; gap:6px; background: rgba(0, 20, 0, 0.5); }
     #command-input { flex:1; background: transparent; border: none; color: var(--phosphor); font-family: 'VT323', monospace; font-size: 14px; outline: none; }
@@ -89,6 +90,7 @@
   <div id="main-container">
     <!-- Left: Terminal -->
     <section id="terminal-section">
+      <div id="term-handle">WOPR CONSOLE</div>
       <div id="terminal-output" role="log" aria-live="polite" aria-atomic="false"></div>
       <div id="input-line">
         <span id="prompt">&gt;</span>
@@ -143,6 +145,8 @@
   // =========================
   // WOPR + YouTube Analytics
   // =========================
+  const terminalSection = document.getElementById('terminal-section');
+  const terminalHandle = document.getElementById('term-handle');
   const terminalOutput = document.getElementById('terminal-output');
   const commandInput = document.getElementById('command-input');
   const lastInputDisplay = document.getElementById('last-input');
@@ -172,6 +176,95 @@
 
   // Tip for world map hover
   const tipWorld = document.getElementById('tip-world');
+
+  function makeDraggable(panel, handle, storageKey){
+    if(!panel || !handle) return;
+
+    let startX = 0;
+    let startY = 0;
+    let startLeft = 0;
+    let startTop = 0;
+    let dragging = false;
+    let hasCustomPosition = false;
+
+    const clamp = (value, min, max) => Math.min(Math.max(value, min), max);
+
+    const persist = (left, top) => {
+      try{
+        localStorage.setItem(storageKey, JSON.stringify({ left, top }));
+      }catch(_err){ /* ignore */ }
+    };
+
+    const applyPosition = (left, top) => {
+      const maxLeft = Math.max(0, window.innerWidth - panel.offsetWidth);
+      const maxTop = Math.max(0, window.innerHeight - panel.offsetHeight);
+      const clampedLeft = clamp(left, 0, maxLeft);
+      const clampedTop = clamp(top, 0, maxTop);
+      panel.style.left = `${clampedLeft}px`;
+      panel.style.top = `${clampedTop}px`;
+      panel.style.bottom = 'auto';
+      panel.style.right = 'auto';
+      return { left: clampedLeft, top: clampedTop };
+    };
+
+    const loadStoredPosition = () => {
+      try{
+        const raw = localStorage.getItem(storageKey);
+        if(!raw) return;
+        const stored = JSON.parse(raw);
+        if(typeof stored?.left === 'number' && typeof stored?.top === 'number'){
+          const applied = applyPosition(stored.left, stored.top);
+          hasCustomPosition = true;
+          persist(applied.left, applied.top);
+        }
+      }catch(_err){ /* ignore */ }
+    };
+
+    const handleResize = () => {
+      if(!hasCustomPosition) return;
+      const rect = panel.getBoundingClientRect();
+      const applied = applyPosition(rect.left, rect.top);
+      persist(applied.left, applied.top);
+    };
+
+    const onMouseMove = (event) => {
+      if(!dragging) return;
+      const dx = event.clientX - startX;
+      const dy = event.clientY - startY;
+      applyPosition(startLeft + dx, startTop + dy);
+      hasCustomPosition = true;
+    };
+
+    const onMouseUp = () => {
+      if(!dragging) return;
+      dragging = false;
+      window.removeEventListener('mousemove', onMouseMove);
+      window.removeEventListener('mouseup', onMouseUp);
+      const rect = panel.getBoundingClientRect();
+      const applied = applyPosition(rect.left, rect.top);
+      hasCustomPosition = true;
+      persist(applied.left, applied.top);
+    };
+
+    const onMouseDown = (event) => {
+      if(event.button !== 0) return;
+      dragging = true;
+      startX = event.clientX;
+      startY = event.clientY;
+      const rect = panel.getBoundingClientRect();
+      startLeft = rect.left;
+      startTop = rect.top;
+      window.addEventListener('mousemove', onMouseMove);
+      window.addEventListener('mouseup', onMouseUp);
+      event.preventDefault();
+    };
+
+    handle.addEventListener('mousedown', onMouseDown);
+    window.addEventListener('resize', handleResize);
+    loadStoredPosition();
+  }
+
+  makeDraggable(terminalSection, terminalHandle, 'terminal-position');
 
   // DPR-aware sizing
   function fitCanvas(c, ctx){
