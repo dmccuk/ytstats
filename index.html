@@ -60,6 +60,58 @@
     @keyframes scan { 0% { transform: translateY(0); } 100% { transform: translateY(3px); } }
     canvas { display:block; width:100%; height:100%; }
 
+    /* City drill modal */
+    #city-popup[hidden] { display: none; }
+    #city-popup {
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.78);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 600;
+      padding: 20px;
+    }
+    #city-popup .modal-content {
+      position: relative;
+      width: min(520px, 90vw);
+      height: min(420px, 80vh);
+      border: 1px solid var(--phosphor);
+      background: #000;
+      box-shadow: 0 0 24px rgba(51, 255, 51, 0.35);
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+    #city-popup .modal-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 10px 14px 6px;
+      border-bottom: 1px solid rgba(51, 255, 51, 0.25);
+    }
+    #city-popup-title {
+      font-size: 14px;
+      text-shadow: 0 0 8px var(--phosphor);
+    }
+    #city-popup-close {
+      background: transparent;
+      border: 1px solid var(--phosphor);
+      color: var(--phosphor);
+      font-family: 'VT323', monospace;
+      padding: 2px 8px;
+      letter-spacing: 1px;
+      cursor: pointer;
+    }
+    #city-popup-close:focus {
+      outline: 2px dashed #7aff7a;
+      outline-offset: 3px;
+    }
+    #city-popup .modal-body {
+      position: relative;
+      flex: 1;
+    }
+
     .legend { position:absolute; right:10px; top:6px; font-size:12px; opacity:.85 }
     .badge { border:1px solid var(--phosphor); padding:1px 6px; margin-left:6px; font-size:12px; }
 
@@ -141,6 +193,19 @@
     <div>LAST INPUT: <span id="last-input">-</span></div>
   </div>
 
+  <div id="city-popup" hidden aria-hidden="true">
+    <div class="modal-content monitor-box" role="dialog" aria-modal="true" aria-labelledby="city-popup-title">
+      <div class="modal-header">
+        <div class="monitor-title" id="city-popup-title">CITY DETAIL</div>
+        <button type="button" id="city-popup-close" aria-label="Close city detail overlay">CLOSE</button>
+      </div>
+      <div class="modal-body">
+        <canvas id="city-popup-canvas"></canvas>
+        <div class="scan-line"></div>
+      </div>
+    </div>
+  </div>
+
   <script>
   // =========================
   // WOPR + YouTube Analytics
@@ -155,6 +220,11 @@
   const trackCountDisplay = document.getElementById('track-count');
   const metricBadge = document.getElementById('metric-badge');
   const jsonInput = document.getElementById('json-input');
+
+  const cityPopup = document.getElementById('city-popup');
+  const cityPopupTitle = document.getElementById('city-popup-title');
+  const cityPopupClose = document.getElementById('city-popup-close');
+  const cityPopupCanvas = document.getElementById('city-popup-canvas');
 
   const topBoxTitle = document.getElementById('top-box-title');
   const detailBoxTitle = document.getElementById('detail-box-title');
@@ -173,6 +243,7 @@
   const countriesCtx = countriesCanvas.getContext('2d');
   const countryCtx = countryCanvas.getContext('2d');
   const timeseriesCtx = timeseriesCanvas.getContext('2d');
+  const cityPopupCtx = cityPopupCanvas.getContext('2d');
 
   // Tip for world map hover
   const tipWorld = document.getElementById('tip-world');
@@ -205,7 +276,86 @@
     canvas.addEventListener('mouseleave', ()=>{ tipBars.style.display='none'; });
   }
 
-  [overviewCanvas, countriesCanvas, countryCanvas].forEach(attachBarTooltip);
+  [overviewCanvas, countriesCanvas, countryCanvas, cityPopupCanvas].forEach(attachBarTooltip);
+
+  let cityPopupLastFocus = null;
+  let cityPopupDetail = null;
+  const focusableSelector = 'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])';
+
+  function openCityPopup(detail){
+    if(!cityPopup || !cityPopupCtx) return;
+    const wasHidden = cityPopup.hasAttribute('hidden');
+    cityPopupDetail = {
+      code: detail?.code || '',
+      name: detail?.name || detail?.code || '',
+      cities: Array.isArray(detail?.cities) ? detail.cities.slice() : []
+    };
+    const codeSuffix = cityPopupDetail.code ? ` (${cityPopupDetail.code})` : '';
+    cityPopupTitle.textContent = `CITY DETAIL // ${cityPopupDetail.name}${codeSuffix}`;
+    if(wasHidden){
+      cityPopupLastFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    }
+    cityPopup.removeAttribute('hidden');
+    cityPopup.setAttribute('aria-hidden', 'false');
+    fitCanvas(cityPopupCanvas, cityPopupCtx);
+    drawBars(cityPopupCtx, cityPopupDetail.cities, d=>d.city, d=>d.value);
+    requestAnimationFrame(()=>{ cityPopupClose?.focus(); });
+  }
+
+  function closeCityPopup(){
+    if(!cityPopup) return;
+    if(cityPopup.hasAttribute('hidden')) return;
+    cityPopup.setAttribute('hidden', '');
+    cityPopup.setAttribute('aria-hidden', 'true');
+    if(cityPopupCtx){
+      cityPopupCtx.clearRect(0, 0, cityPopupCanvas.width, cityPopupCanvas.height);
+      cityPopupCanvas.__barMeta = [];
+    }
+    tipBars.style.display = 'none';
+    cityPopupDetail = null;
+    const returnFocus = cityPopupLastFocus;
+    cityPopupLastFocus = null;
+    if(returnFocus && typeof returnFocus.focus === 'function'){
+      returnFocus.focus();
+    }
+  }
+
+  function trapFocusWithinPopup(event){
+    if(cityPopup.hasAttribute('hidden')) return;
+    if(event.key === 'Escape'){
+      event.preventDefault();
+      closeCityPopup();
+      return;
+    }
+    if(event.key !== 'Tab') return;
+    const focusable = Array.from(cityPopup.querySelectorAll(focusableSelector))
+      .filter(el => !el.hasAttribute('disabled') && el.tabIndex !== -1 && el.offsetParent !== null);
+    if(!focusable.length){
+      event.preventDefault();
+      return;
+    }
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    if(event.shiftKey){
+      if(document.activeElement === first || !cityPopup.contains(document.activeElement)){
+        event.preventDefault();
+        last.focus();
+      }
+    } else {
+      if(document.activeElement === last){
+        event.preventDefault();
+        first.focus();
+      }
+    }
+  }
+
+  cityPopup?.addEventListener('keydown', trapFocusWithinPopup);
+  cityPopupClose?.addEventListener('click', closeCityPopup);
+  cityPopup?.addEventListener('click', (event)=>{
+    if(event.target === cityPopup){
+      closeCityPopup();
+    }
+  });
 
   function makeDraggable(panel, handle, storageKey){
     if(!panel || !handle) return;
@@ -314,7 +464,14 @@
     fitCanvas(countriesCanvas, countriesCtx);
     fitCanvas(countryCanvas, countryCtx);
     fitCanvas(timeseriesCanvas, timeseriesCtx);
+    if(!cityPopup?.hasAttribute('hidden')){
+      fitCanvas(cityPopupCanvas, cityPopupCtx);
+    }
     drawAll();
+    if(!cityPopup?.hasAttribute('hidden')){
+      const source = cityPopupDetail?.cities?.length ? cityPopupDetail.cities : (analytics.countryDetail?.cities || []);
+      drawBars(cityPopupCtx, source, d=>d.city, d=>d.value);
+    }
   }
   window.addEventListener('resize', () => requestAnimationFrame(resizeAll));
 
@@ -621,33 +778,54 @@
   }
 
   async function loadCountryCities(code, name){
-    if(viewMode!=='GEO') return;
-    if(dataMode==='LOCAL'){
-      const cached = localGeoByCountry.get(code);
-      if(cached){
-        const detailName = cached.name || name || code;
-        analytics.countryDetail = { code, name: detailName, cities: cached.cities.slice(0) };
-        const title = document.querySelector('#country-detail-box .monitor-title');
-        title.textContent = `COUNTRY DETAIL // ${detailName} (${code})`;
-        drawAll();
-        return;
-      }
-      const fallbackName = name || code;
-      analytics.countryDetail = { code, name: fallbackName, cities: [] };
-      const title = document.querySelector('#country-detail-box .monitor-title');
-      title.textContent = `COUNTRY DETAIL // ${fallbackName} (${code})`;
-      drawAll();
-      return;
-    }
-    try{
-      const cities = await fetchJSON(`/api/yta/country/${code}/cities?metric=${metric}&days=${days}`);
-      analytics.countryDetail = { code, name, cities:cities.sort((a,b)=>b.value-a.value) };
-    }catch(e){
-      analytics.countryDetail = { code, name, cities: mockCities(code) };
-    }
+    if(viewMode!=='GEO') return null;
+    const fallbackName = name || code || '';
     const title = document.querySelector('#country-detail-box .monitor-title');
-    title.textContent = `COUNTRY DETAIL // ${name} (${code})`;
-    drawAll();
+
+    const applyDetail = (detail)=>{
+      const detailName = detail?.name || fallbackName;
+      const detailCode = detail?.code || code || '';
+      const cities = Array.isArray(detail?.cities) ? detail.cities.slice() : [];
+      analytics.countryDetail = { code: detailCode, name: detailName, cities };
+      const codeSuffix = detailCode ? ` (${detailCode})` : '';
+      if(title){
+        title.textContent = `COUNTRY DETAIL // ${detailName}${codeSuffix}`;
+      }
+      drawAll();
+      return analytics.countryDetail;
+    };
+
+    const cached = localGeoByCountry.get(code);
+
+    if(dataMode==='LOCAL'){
+      if(cached && cached.cities?.length){
+        return applyDetail({ code, name: cached.name || fallbackName, cities: cached.cities });
+      }
+      return applyDetail({ code, name: cached?.name || fallbackName, cities: mockCities(code) });
+    }
+
+    let liveCities = [];
+    try{
+      const response = await fetchJSON(`/api/yta/country/${code}/cities?metric=${metric}&days=${days}`);
+      if(Array.isArray(response)){
+        liveCities = response
+          .map(city=>({ city: city.city, value: Number(city.value||0) }))
+          .filter(city=>city.city);
+      }
+    }catch(_err){
+      liveCities = [];
+    }
+
+    if(liveCities.length){
+      liveCities.sort((a,b)=>b.value-a.value);
+      return applyDetail({ code, name: fallbackName, cities: liveCities });
+    }
+
+    if(cached && cached.cities?.length){
+      return applyDetail({ code, name: cached.name || fallbackName, cities: cached.cities });
+    }
+
+    return applyDetail({ code, name: fallbackName, cities: mockCities(code) });
   }
 
   function useMockData(){
@@ -719,7 +897,10 @@
       const [cx,cy]=centroidOfFeature(feat,w,h); const dx=cx-x, dy=cy-y; const d=dx*dx+dy*dy; if(d<bestDist){ bestDist=d; best={ c, cx, cy}; }
     });
     if(best && Math.sqrt(bestDist) < 28){
-      loadCountryCities(best.c.countryCode, best.c.countryName);
+      const promise = loadCountryCities(best.c.countryCode, best.c.countryName);
+      if(promise && typeof promise.then === 'function'){
+        promise.then(detail=>{ if(detail) openCityPopup(detail); }).catch(()=>{});
+      }
       if(defconLevel>2) setDefcon(defconLevel-1);
       trackCount++; trackCountDisplay.textContent = trackCount;
     }
@@ -773,7 +954,10 @@
         if(viewMode!=='GEO'){ printLine('INFO: Switch to GEO mode first (MODE GEO)'); }
         const c=(parts[1]||'').toUpperCase(); if(!c) { printLine('ERROR: COUNTRY [ISO2]'); return; }
         const item = analytics.countries.find(x=>x.countryCode===c); if(!item){ printLine('ERROR: UNKNOWN/UNRANKED COUNTRY'); return; }
-        loadCountryCities(item.countryCode, item.countryName);
+        const promise = loadCountryCities(item.countryCode, item.countryName);
+        if(promise && typeof promise.then === 'function'){
+          promise.then(detail=>{ if(detail) openCityPopup(detail); }).catch(()=>{});
+        }
       }
       else if(cmd==='MODE'){
         const m=(parts[1]||'').toUpperCase();
